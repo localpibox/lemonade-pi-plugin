@@ -29,7 +29,7 @@ export default async function lemonadeProvider(pi: ExtensionAPI): Promise<void> 
     login: (callbacks: Parameters<typeof oauthLogin>[1]): ReturnType<typeof oauthLogin> =>
       oauthLogin(pi, callbacks, oauthBlock),
     refreshToken: async (creds: Awaited<ReturnType<typeof oauthLogin>>): Promise<Awaited<ReturnType<typeof oauthLogin>>> => {
-      const payload = decodeCreds(creds);
+      const payload = { ...decodeCreds(creds) }; // spread: avoid mutating original creds
       if (payload.baseUrl) {
         try {
           await registerLemonadeProvider(pi, payload, oauthBlock);
@@ -37,11 +37,19 @@ export default async function lemonadeProvider(pi: ExtensionAPI): Promise<void> 
           // network blip — keep creds, retry on next refresh
         }
       }
+      // Fallback: try to resolve baseUrl from env if stored creds are stale
+      if (!payload.baseUrl) {
+        const envUrl = process.env.LEMONADE_BASE_URL;
+        if (envUrl) {
+          payload.baseUrl = envUrl.replace(/\/+$/, "");
+        }
+      }
       return encodeCreds(payload);
     },
     getApiKey: (creds: Awaited<ReturnType<typeof oauthLogin>>): string => {
       const payload = decodeCreds(creds);
-      return payload.apiKey || "";
+      // Also check creds.access as a fallback for apiKey
+      return payload.apiKey || (creds as any).access || "";
     },
   };
 
@@ -51,6 +59,7 @@ export default async function lemonadeProvider(pi: ExtensionAPI): Promise<void> 
     name: PROVIDER_LABEL,
     baseUrl: "http://localhost:8000/v1",
     api: "openai-completions",
+    auth_type: "api-key",
     models: [],
     oauth: oauthBlock,
   });
