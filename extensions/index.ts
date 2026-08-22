@@ -38,7 +38,7 @@ export default async function lemonadeProvider(pi: ExtensionAPI): Promise<void> 
           // network blip — keep creds, retry on next refresh
         }
         // Keep models-store.json in sync during token refresh too.
-        syncModelStore(payload.apiKey);
+        syncModelStore(payload.baseUrl, payload.apiKey);
       }
       // Fallback: try to resolve baseUrl from env if stored creds are stale
       if (!payload.baseUrl) {
@@ -78,7 +78,7 @@ export default async function lemonadeProvider(pi: ExtensionAPI): Promise<void> 
     }
     // Keep models-store.json in sync so subprocesses and subagents can
     // resolve lemonade models with correct context sizes.
-    syncModelStore(stored.apiKey);
+    syncModelStore(stored.baseUrl, stored.apiKey);
   }
 
   registerAdminCommand(pi, oauthBlock);

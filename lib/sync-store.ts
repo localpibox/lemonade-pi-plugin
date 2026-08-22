@@ -21,14 +21,21 @@ const STORE_PATH = path.join(os.homedir(), ".pi", "agent", "models-store.json");
  * Reads from the API and maps models using the same logic as the provider
  * registration, so subprocesses and subagents see the same contextWindow
  * and maxTokens values.
+ *
+ * URL precedence: stored login credentials → LEMONADE_BASE_URL → local
+ * default. The env var is often the container default (127.0.0.1) even when
+ * the user logged in to a LAN server — trusting it over the stored creds
+ * fails silently and the store is never populated.
  */
-export async function syncModelStore(apiKey?: string): Promise<void> {
-  const baseUrl = process.env.LEMONADE_BASE_URL
-    ? `${buildBaseUrl(process.env.LEMONADE_BASE_URL!)}/api/v1/models`
-    : "http://127.0.0.1:13305/api/v1/models";
+export async function syncModelStore(baseUrl?: string, apiKey?: string): Promise<void> {
+  const fromEnv = process.env.LEMONADE_BASE_URL
+    ? buildBaseUrl(process.env.LEMONADE_BASE_URL)
+    : "";
+  const base = (baseUrl ? buildBaseUrl(baseUrl) : "") || fromEnv || "http://127.0.0.1:13305";
+  const modelsUrl = `${base}/api/v1/models`;
 
   try {
-    const res = await fetch(baseUrl, {
+    const res = await fetch(modelsUrl, {
       headers: {
         "Content-Type": "application/json",
         Accept: "application/json",
@@ -36,7 +43,12 @@ export async function syncModelStore(apiKey?: string): Promise<void> {
       },
       signal: AbortSignal.timeout(10_000),
     });
-    if (!res.ok) return;
+    if (!res.ok) {
+      console.warn(
+        `[lemonade] models-store sync: ${modelsUrl} → HTTP ${res.status} (store not updated)`,
+      );
+      return;
+    }
     const data = await res.json() as { data?: LemonadeModelInfo[] };
     const models = data?.data || [];
 
@@ -55,7 +67,9 @@ export async function syncModelStore(apiKey?: string): Promise<void> {
     } catch {
       // non-critical — subprocesses still fall back to provider at runtime
     }
-  } catch {
-    // ignore network errors — models-store.json will be stale but usable
+  } catch (err) {
+    console.warn(
+      `[lemonade] models-store sync failed for ${modelsUrl}: ${String(err)} (store not updated)`,
+    );
   }
 }

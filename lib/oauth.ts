@@ -87,7 +87,7 @@ export async function oauthLogin(
     serverName: `${serverName} v${health.version}`,
   };
   await registerLemonadeProvider(pi, payload, oauthBlock);
-  syncModelStore(apiKey);
+  syncModelStore(baseUrl, apiKey);
 
   return encodeCreds(payload);
 }

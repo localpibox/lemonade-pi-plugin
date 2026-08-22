@@ -229,7 +229,7 @@ export function registerAdminCommand(pi: ExtensionAPI, oauthBlock: unknown): voi
 
         case "refresh": {
           const count = await registerLemonadeProvider(pi, payload, oauthBlock);
-          syncModelStore(payload.apiKey);
+          syncModelStore(payload.baseUrl, payload.apiKey);
           ctx.ui.notify(`Re-synced: ${count} models registered.`, "info");
           return;
         }
@@ -365,7 +365,7 @@ export function registerAdminCommand(pi: ExtensionAPI, oauthBlock: unknown): voi
 
           // Re-sync provider and models-store to update contextWindow
           await registerLemonadeProvider(pi, payload, oauthBlock);
-          syncModelStore(payload.apiKey);
+          syncModelStore(payload.baseUrl, payload.apiKey);
           ctx.ui.notify("Provider re-registered with new ctx.", "info");
           return;
         }
