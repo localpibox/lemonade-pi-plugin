@@ -5,7 +5,7 @@
  */
 
 import type { LemonadeModelInfo } from "./types.js";
-import { DEFAULT_MAX_TOKENS_CONTEXT_RATIO, QWEN_REASONING_MAX_TOKENS_CONTEXT_RATIO, QWEN_REASONING_BUDGET_TOKENS } from "./constants.js";
+import { DEFAULT_MAX_TOKENS_CONTEXT_RATIO, QWEN_REASONING_MAX_TOKENS_CONTEXT_RATIO } from "./constants.js";
 
 export function isReasoningModel(recipe: string | undefined): boolean {
   if (!recipe) return false;
@@ -148,8 +148,21 @@ export function mapToProviderModel(m: LemonadeModelInfo) {
   // Qwen-specific fields for thinking support
   if (isQwen) {
     result.enable_thinking = true;
-    result.reasoning_budget_tokens = QWEN_REASONING_BUDGET_TOKENS;
     result.thinkingFormat = "qwen-chat-template";
+    // Per-level thinking budget. pi (v0.84.3+, #8275) computes
+    // DEFAULT_THINKING_BUDGETS (minimal 1024 / low 2048 / medium 8192 /
+    // high 16384) and sends it as a TOP-LEVEL request field named by
+    // compat.thinkingTokenBudgetField, clamped to leave 1024 tokens for the
+    // answer. The llama.cpp backend (Qwen MTP GGUF) honors
+    // `thinking_budget_tokens` (and `reasoning_budget_tokens`) but IGNORES
+    // the `reasoning_effort` string in chat_template_kwargs and
+    // `reasoning_budget_tokens: 0` (= unlimited). Without this field the
+    // thinking levels (low/medium/high) are no-ops and thinking runs
+    // unbounded until max_tokens.
+    result.compat = {
+      ...(result.compat as Record<string, unknown> | undefined),
+      thinkingTokenBudgetField: "thinking_budget_tokens",
+    };
   }
 
   // FLM backends reject the `developer` role used for reasoning —
