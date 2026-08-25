@@ -13,13 +13,13 @@
   ],
   "license": "MIT",
   "author": "Lemonade SDK",
-  "homepage": "https://github.com/localpibox/lemonade-pi-plugin",
+  "homepage": "https://github.com/lpb-stack/lemonade-pi-plugin",
   "repository": {
     "type": "git",
-    "url": "https://github.com/localpibox/lemonade-pi-plugin.git"
+    "url": "https://github.com/lpb-stack/lemonade-pi-plugin.git"
   },
   "bugs": {
-    "url": "https://github.com/localpibox/lemonade-pi-plugin/issues"
+    "url": "https://github.com/lpb-stack/lemonade-pi-plugin/issues"
   },
   "peerDependencies": {
     "@earendil-works/pi-coding-agent": "*",

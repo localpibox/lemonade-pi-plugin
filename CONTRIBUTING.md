@@ -4,7 +4,7 @@ This extension registers [Lemonade](https://github.com/lemonade-sdk/lemonade) �
 a local LLM server — as a custom provider in Pi. The LocalPibox fork adds Qwen
 thinking and vision support.
 
-> **⚡ [← Back to LocalPibox](https://github.com/localpibox/localpibox)**
+> **⚡ [← Back to LocalPibox](https://github.com/lpb-stack/devstack)**
 
 ## The Patch Model
 
@@ -42,7 +42,7 @@ lpb-dev branch      ──→ [lpb patch]──┘
 ## Development
 
 ```bash
-git clone https://github.com/localpibox/lemonade-pi-plugin.git
+git clone https://github.com/lpb-stack/lemonade-pi-plugin.git
 cd lemonade-pi-plugin
 
 # Symlink into Pi's extensions
@@ -72,7 +72,7 @@ git push --force-with-lease origin lpb-dev
    ```
 
 See the
-[Forking & Repointing guide](https://github.com/localpibox/devstack#forking--repointing)
+[Forking & Repointing guide](https://github.com/lpb-stack/devstack#forking--repointing)
 for the full stack procedure.
 
 ## Feeding Back
@@ -82,6 +82,6 @@ to `lemonade-sdk/lemonade-pi-plugin`.
 
 ## Reporting Issues
 
-- **Extension issues** → [localpibox/lemonade-pi-plugin/issues](https://github.com/localpibox/lemonade-pi-plugin/issues)
+- **Extension issues** → [lpb-stack/lemonade-pi-plugin/issues](https://github.com/lpb-stack/lemonade-pi-plugin/issues)
 - **Lemonade server** → [lemonade-sdk](https://github.com/lemonade-sdk)
-- **Stack configuration** → [localpibox/devstack/issues](https://github.com/localpibox/devstack/issues)
+- **Stack configuration** → [lpb-stack/devstack/issues](https://github.com/lpb-stack/devstack/issues)
