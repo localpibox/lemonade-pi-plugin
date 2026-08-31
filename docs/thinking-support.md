@@ -4,6 +4,14 @@
 **Status:** Fixed — thinking levels work. Further improvements available.  
 **Key model:** Qwen3.6-35B-A3B-MTP-GGUF (MTP = multi-token prediction, 3B active params)
 
+> **⚠️ Status update (2026-08-31):** the `lpb-stack/pi` fork has been RETIRED —
+> the stack builds from mainstream `earendil-works/pi` (pinned tag `v0.84.4`).
+> The wire format in §1 is **fork-era**: on mainstream pi, `chat_template_kwargs`
+> is NOT sent (the top-level `thinkingFormat` in the plugin was dead config), and
+> thinking is controlled by `thinking_budget_tokens` alone. Current design,
+> verified payload, deferred experiments and the revert path:
+> [qwen-thinking-mainstream-pi.md](qwen-thinking-mainstream-pi.md).
+
 ---
 
 ## 1. Architecture: How Thinking Works in This Stack

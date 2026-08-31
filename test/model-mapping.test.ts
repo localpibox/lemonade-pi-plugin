@@ -36,8 +36,8 @@ function check(name: string, cond: boolean, extra?: unknown) {
 
 const q = mapToProviderModel(qwenMtp);
 check("qwen: reasoning=true", q.reasoning === true, q.reasoning);
-check("qwen: enable_thinking=true", (q as any).enable_thinking === true);
-check("qwen: thinkingFormat=qwen-chat-template", (q as any).thinkingFormat === "qwen-chat-template");
+check("qwen: no dead top-level enable_thinking", !("enable_thinking" in (q as any)), q);
+check("qwen: no dead top-level thinkingFormat (budget-only design)", !("thinkingFormat" in (q as any)), q);
 check("qwen: compat.thinkingTokenBudgetField='thinking_budget_tokens'",
   (q as any).compat?.thinkingTokenBudgetField === "thinking_budget_tokens", (q as any).compat);
 check("qwen: no dead top-level reasoning_budget_tokens", !("reasoning_budget_tokens" in (q as any)), q);

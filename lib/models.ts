@@ -145,20 +145,18 @@ export function mapToProviderModel(m: LemonadeModelInfo) {
     maxTokens,
   };
 
-  // Qwen-specific fields for thinking support
+  // Qwen thinking control — budget-only design (de-forked 2026-08-31).
+  // pi (v0.84.3+, #8275) computes DEFAULT_THINKING_BUDGETS (minimal 1024 /
+  // low 2048 / medium 8192 / high 16384) and sends it as a TOP-LEVEL request
+  // field named by compat.thinkingTokenBudgetField — the only per-level knob
+  // the llama.cpp backend honors. Full design, verified wire format, the
+  // deferred chat_template_kwargs experiment, and the revert path:
+  //   docs/qwen-thinking-mainstream-pi.md
+  // PITFALL: do NOT add top-level `thinkingFormat`/`enable_thinking` here —
+  // pi reads only `model.compat.thinkingFormat`; top-level copies are dead
+  // config (verified: captured payloads never carried chat_template_kwargs
+  // while top-level thinkingFormat was set).
   if (isQwen) {
-    result.enable_thinking = true;
-    result.thinkingFormat = "qwen-chat-template";
-    // Per-level thinking budget. pi (v0.84.3+, #8275) computes
-    // DEFAULT_THINKING_BUDGETS (minimal 1024 / low 2048 / medium 8192 /
-    // high 16384) and sends it as a TOP-LEVEL request field named by
-    // compat.thinkingTokenBudgetField, clamped to leave 1024 tokens for the
-    // answer. The llama.cpp backend (Qwen MTP GGUF) honors
-    // `thinking_budget_tokens` (and `reasoning_budget_tokens`) but IGNORES
-    // the `reasoning_effort` string in chat_template_kwargs and
-    // `reasoning_budget_tokens: 0` (= unlimited). Without this field the
-    // thinking levels (low/medium/high) are no-ops and thinking runs
-    // unbounded until max_tokens.
     result.compat = {
       ...(result.compat as Record<string, unknown> | undefined),
       thinkingTokenBudgetField: "thinking_budget_tokens",
