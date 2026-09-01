@@ -18,6 +18,18 @@ export interface ExtensionAPI {
       handler: (args: string, ctx: PiCommandContext) => Promise<void>;
     },
   ): void;
+  /**
+   * Register an extension event handler. Used for `before_provider_request`:
+   * the handler receives `(event, ctx)` and its RETURN VALUE replaces the
+   * outgoing wire payload (return undefined to pass it through untouched).
+   */
+  on(
+    event: "before_provider_request",
+    handler: (
+      event: { type: "before_provider_request"; payload: Record<string, unknown> },
+      ctx: { thinkingLevel?: string },
+    ) => Record<string, unknown> | undefined,
+  ): void;
 }
 
 export interface PiCommandContext {

@@ -28,20 +28,26 @@ function isReasoningByHeuristic(m: LemonadeModelInfo): boolean {
 
 /**
  * Detect Qwen3.x+ models that support the `enable_thinking` protocol
- * via OpenAI-compatible API. Qwen3.x, QwQ, and Qwen2.5-Thinking models
- * emit thinking tokens and respond to the `enable_thinking` parameter.
+ * via OpenAI-compatible API, by model NAME. Qwen3.x, QwQ, and
+ * Qwen2.5-Thinking models emit thinking tokens and respond to the
+ * `enable_thinking` parameter. Exported: also used by payload-tuning.ts
+ * on the wire payload (where only the model id is available).
  */
-function isQwenReasoningModel(m: LemonadeModelInfo): boolean {
-  const name = (m.name || m.id || "").toLowerCase();
+export function isQwenModelName(name: string): boolean {
+  const n = (name || "").toLowerCase();
   // Qwen3.x family — these models support enable_thinking via OpenAI-compatible API
-  if (/qwen3[._-]?\d/.test(name) || /qwen-3/.test(name)) return true;
+  if (/qwen3[._-]?\d/.test(n) || /qwen-3/.test(n)) return true;
   // QwQ reasoning models
-  if (/qwq/.test(name)) return true;
+  if (/qwq/.test(n)) return true;
   // Qwen2.5-thinking
-  if (/qwen2\.5.*think/.test(name) || /qwen2\.5-thinking/.test(name)) return true;
+  if (/qwen2\.5.*think/.test(n) || /qwen2\.5-thinking/.test(n)) return true;
   // Qwen2.5-72B-Instruct (newer versions support thinking)
-  if (/qwen2\.5-72b.*instruct/.test(name)) return true;
+  if (/qwen2\.5-72b.*instruct/.test(n)) return true;
   return false;
+}
+
+function isQwenReasoningModel(m: LemonadeModelInfo): boolean {
+  return isQwenModelName(m.name || m.id || "");
 }
 
 /**
