@@ -74,6 +74,12 @@ export interface ModelParamsEntry {
   coding?: SamplingParams;
   /** Vendor sampling for the off level (P3). */
   nonThinking?: SamplingParams;
+  /**
+   * Per-model off-switch token (P5). Default (absent): the Qwen3.x
+   * `/no_think` token. Empty string: no suffix for this model. Other
+   * model families may need different model-native tokens.
+   */
+  noThinkSuffix?: string;
 }
 
 export type ModelParamsFile = Record<string, ModelParamsEntry>;
@@ -160,6 +166,9 @@ export function resolveModelEntry(modelId: string): ModelParamsEntry | undefined
   if (coding) merged.coding = coding;
   const nonThinking = merge(base?.nonThinking, over?.nonThinking);
   if (nonThinking) merged.nonThinking = nonThinking;
+  const noThinkSuffix =
+    over?.noThinkSuffix !== undefined ? over.noThinkSuffix : base?.noThinkSuffix;
+  if (noThinkSuffix !== undefined) merged.noThinkSuffix = noThinkSuffix;
   return merged;
 }
 

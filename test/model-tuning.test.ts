@@ -8,7 +8,7 @@
  *
  * Run: node_modules/.bin/jiti test/model-tuning.test.ts
  */
-import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdtempSync, readFileSync, rmSync, utimesSync, writeFileSync } from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
 import {
@@ -72,6 +72,20 @@ function deepCopy<T>(v: T): T {
 const tmpDir = mkdtempSync(path.join(os.tmpdir(), "model-params-test-"));
 const userFile = path.join(tmpDir, "model-params.json");
 process.env.LPB_MODEL_PARAMS_FILE = userFile;
+
+// The loader caches by mtime; force a distinct mtime after every test write
+// so rapid consecutive writes are never collapsed by sub-ms clock resolution.
+let mtimeBump = 0;
+function touchUserFile() {
+  mtimeBump++;
+  const t = Date.now() / 1000 + mtimeBump * 0.001;
+  utimesSync(userFile, t, t);
+}
+
+function writeUserFile(raw: unknown) {
+  writeFileSync(userFile, typeof raw === "string" ? raw : JSON.stringify(raw, null, 1));
+  touchUserFile();
+}
 
 // ── helpers ─────────────────────────────────────────────────────────────────
 check("thinkingBudgetLevel: minimal", thinkingBudgetLevel("minimal") === "minimal");
@@ -244,6 +258,30 @@ for (const level of ["minimal", "low", "medium", "high"] as const) {
   delete process.env.LPB_NO_THINK_SUFFIX;
 }
 
+{
+  // Per-model off-switch token (P5 reuse for other model families)
+  writeUserFile(JSON.stringify({
+    "Test-Model-7B": { "nonThinking": { "temperature": 0.5 }, "noThinkSuffix": "/think_off" },
+  }));
+  const r = tuneModelPayload(wirePayload({ model: "Test-Model-7B" }));
+  const user = (r?.messages as any[]).find((m) => m.role === "user");
+  check("P5: per-model custom suffix token", user?.content === "Fix the bug in main.ts /think_off", user?.content);
+  check("P5: …sampling row still applied", r?.temperature === 0.5, r?.temperature);
+}
+{
+  // Empty noThinkSuffix disables the suffix for that model only
+  writeUserFile(JSON.stringify({
+    "Test-Model-7B": { "nonThinking": { "temperature": 0.5 }, "noThinkSuffix": "" },
+  }));
+  const r = tuneModelPayload(wirePayload({ model: "Test-Model-7B" }));
+  const user = (r?.messages as any[]).find((m) => m.role === "user");
+  check("P5: noThinkSuffix='' → no append for that model", user?.content === "Fix the bug in main.ts", user?.content);
+  // Default still applies to the seeded Qwen model
+  const rq = tuneModelPayload(wirePayload());
+  const userQ = (rq?.messages as any[]).find((m) => m.role === "user");
+  check("P5: other models unaffected (default token)", userQ?.content === "Fix the bug in main.ts /no_think", userQ?.content);
+}
+
 // ── appendNoThink edge cases ────────────────────────────────────────────────
 {
   const m = appendNoThink([{ role: "user", content: "" }]);
@@ -265,7 +303,7 @@ for (const level of ["minimal", "low", "medium", "high"] as const) {
 // ── catalog: user tier (merge, override, corrupt) ──────────────────────────
 {
   // Partial override: user changes one field, inherits the rest per section
-  writeFileSync(userFile, JSON.stringify({
+  writeUserFile(JSON.stringify({
     "Qwen3.8-27B-GGUF": { "thinking": { "temperature": 0.42 } },
   }));
   const e = resolveModelEntry("Qwen3.8-27B-GGUF");
@@ -280,7 +318,7 @@ for (const level of ["minimal", "low", "medium", "high"] as const) {
 }
 {
   // New model only in the user tier
-  writeFileSync(userFile, JSON.stringify({
+  writeUserFile(JSON.stringify({
     "Test-Model-7B": { "nonThinking": { "temperature": 0.5 } },
   }));
   const e = resolveModelEntry("Test-Model-7B");
@@ -300,7 +338,8 @@ for (const level of ["minimal", "low", "medium", "high"] as const) {
 }
 {
   // Corrupt user file → warned + plugin tier still resolves
-  writeFileSync(userFile, "this is not json");
+  writeUserFile("this is not json"); touchUserFile();
+
   const e = resolveModelEntry("Qwen3.8-27B-GGUF");
   check("user tier: corrupt file → plugin tier fallback", e?.thinking?.temperature === 1.0 && e?.budgets?.low === 3072);
   rmSync(userFile);
@@ -349,6 +388,19 @@ for (const level of ["minimal", "low", "medium", "high"] as const) {
   check("debug log: sampling field", tuned.temperature === 1.0);
   check("debug log: no_think detected", tuned.no_think === true);
   check("debug log: thinkingLevel from ctx", tuned.thinkingLevel === "minimal");
+  // Catalog-aware suffix detection: custom token for a catalogued model
+  const userFile2 = process.env.LPB_MODEL_PARAMS_FILE;
+  writeFileSync(userFile2, JSON.stringify({
+    "Test-Model-7B": { "noThinkSuffix": "/think_off" },
+  }));
+  writePayloadDebugLog(
+    { model: "Test-Model-7B", messages: [{ role: "user", content: "hi /think_off" }] },
+    { model: "Test-Model-7B", thinkingLevel: "off" },
+  );
+  const lastLines = readFileSync(PAYLOAD_DEBUG_PATH, "utf8").trimEnd().split("\n");
+  const last2 = JSON.parse(lastLines[lastLines.length - 1]);
+  check("debug log: custom per-model suffix detected", last2.no_think === true);
+  rmSync(userFile2);
 }
 
 rmSync(tmpDir, { recursive: true, force: true });

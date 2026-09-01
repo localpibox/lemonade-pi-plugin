@@ -176,10 +176,16 @@ Schema (every section and field optional, partial rows allowed):
     "budgets":     { "minimal": 2048, "low": 3072, "medium": 8192, "high": 16384 },
     "thinking":    { "temperature": 1.0, "top_p": 0.95, "top_k": 20, "min_p": 0.0, "presence_penalty": 0.0, "repetition_penalty": 1.0 },
     "coding":      { "temperature": 0.6 },
-    "nonThinking": { "temperature": 0.7, "top_p": 0.8, "top_k": 20, "min_p": 0.0, "presence_penalty": 1.5, "repetition_penalty": 1.0 }
+    "nonThinking": { "temperature": 0.7, "top_p": 0.8, "top_k": 20, "min_p": 0.0, "presence_penalty": 1.5, "repetition_penalty": 1.0 },
+    "noThinkSuffix": "/no_think"
   }
 }
 ```
+
+`noThinkSuffix` is the per-model off-switch token (P5): default (absent) is
+the Qwen3.x `/no_think` token, empty string disables the suffix for that
+model, other values are used verbatim (other model families may need their
+own model-native token).
 
 Per-field precedence (highest wins): fields already in the wire payload
 (pi `model.samplingParams`, user config) > user tier > plugin tier. The hook
@@ -250,9 +256,10 @@ At the off level pi sends no thinking fields, so the server's `--reasoning on`
 default runs unbounded thinking (and, per the P2 evidence, can yield an empty
 visible answer). Qwen3.x models honor the model-native `/no_think` prompt
 suffix — a **soft** switch, "most recent instruction wins", no API field
-needed. The hook appends ` /no_think` to the **last user message** of the wire
-payload **for catalogued models** (session history keeps the original text;
-string and array content both supported; idempotent).
+needed. The hook appends the model's off-switch token (catalog field
+`noThinkSuffix`, default `/no_think`) to the **last user message** of the
+wire payload **for catalogued models** (session history keeps the original
+text; string and array content both supported; idempotent).
 
 Evidence (2026-09-01, Qwen3.8-27B, identical sampling both runs, 400-token
 cap, same creative prompt):

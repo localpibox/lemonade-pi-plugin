@@ -14,6 +14,7 @@
  */
 
 import * as fs from "node:fs";
+import { resolveModelEntry } from "./model-params.js";
 
 export const PAYLOAD_DEBUG_PATH = "/tmp/pi-payload-capture.jsonl";
 
@@ -69,9 +70,15 @@ export function writePayloadDebugLog(
       min_p: payload.min_p ?? null,
       presence_penalty: payload.presence_penalty ?? null,
       repetition_penalty: payload.repetition_penalty ?? null,
-      no_think: (extractLastUserText(payload.messages) ?? "")
-        .trimEnd()
-        .endsWith(NO_THINK_SUFFIX),
+      // Suffix actually configured for this model (catalog-aware)
+      no_think: (() => {
+        const modelId = typeof (meta.model ?? payload.model) === "string"
+          ? (meta.model ?? payload.model) as string
+          : "";
+        const suffix =
+          (modelId ? resolveModelEntry(modelId)?.noThinkSuffix : undefined) ?? NO_THINK_SUFFIX;
+        return (extractLastUserText(payload.messages) ?? "").trimEnd().endsWith(suffix);
+      })(),
       topKeys: Object.keys(payload).sort(),
     };
     fs.mkdirSync("/tmp", { recursive: true });

@@ -26,10 +26,12 @@
  *   /no_think (P5) — at the off level (no budget field, no effort) the
  *          server's `--reasoning on` default would run UNBOUNDED thinking
  *          (the per-request toggle waits on llama.cpp PR #22336). The
- *          model-native ` /no_think` suffix is appended to the LAST user
+ *          model-native off-switch token is appended to the LAST user
  *          message of the wire copy (string + array content, idempotent);
- *          session history keeps the original text. Soft switch until
- *          #22336 lands.
+ *          session history keeps the original text. The token is
+ *          per-model: entry `noThinkSuffix` (default: the Qwen3.x
+ *          `/no_think` token; empty string disables it for that model).
+ *          Soft switch until #22336 lands.
  *
  * Env (read at request time; defaults are correct for this stack):
  *   LPB_PAYLOAD_TUNING=off      master switch — disable ALL tuning
@@ -80,12 +82,16 @@ export function applySampling(out: Record<string, unknown>, params: SamplingPara
 }
 
 /**
- * Append the /no_think suffix to the LAST user message of a wire-format
- * message array (OpenAI chat shape: content is string | content-part
- * array). Returns a new array (input untouched) or undefined if nothing
- * to do.
+ * Append the off-switch token (default: /no_think) to the LAST user
+ * message of a wire-format message array (OpenAI chat shape: content is
+ * string | content-part array). Returns a new array (input untouched) or
+ * undefined if nothing to do.
  */
-export function appendNoThink(messages: unknown): Record<string, unknown>[] | undefined {
+export function appendNoThink(
+  messages: unknown,
+  suffix: string = NO_THINK_SUFFIX,
+): Record<string, unknown>[] | undefined {
+  if (!suffix) return undefined;
   if (!Array.isArray(messages)) return undefined;
   let lastUser = -1;
   for (let i = messages.length - 1; i >= 0; i--) {
@@ -101,9 +107,9 @@ export function appendNoThink(messages: unknown): Record<string, unknown>[] | un
   const content = msg.content;
 
   if (typeof content === "string") {
-    if (content.trimEnd().endsWith(NO_THINK_SUFFIX)) return undefined;
+    if (content.trimEnd().endsWith(suffix)) return undefined;
     const copy = [...messages] as Record<string, unknown>[];
-    copy[lastUser] = { ...msg, content: `${content} ${NO_THINK_SUFFIX}` };
+    copy[lastUser] = { ...msg, content: `${content} ${suffix}` };
     return copy;
   }
 
@@ -118,11 +124,11 @@ export function appendNoThink(messages: unknown): Record<string, unknown>[] | un
     }
     const parts = [...content] as Record<string, unknown>[];
     if (lastText === -1) {
-      parts.push({ type: "text", text: ` ${NO_THINK_SUFFIX}` });
+      parts.push({ type: "text", text: ` ${suffix}` });
     } else {
       const text = parts[lastText].text as string;
-      if (text.trimEnd().endsWith(NO_THINK_SUFFIX)) return undefined;
-      parts[lastText] = { ...parts[lastText], text: `${text} ${NO_THINK_SUFFIX}` };
+      if (text.trimEnd().endsWith(suffix)) return undefined;
+      parts[lastText] = { ...parts[lastText], text: `${text} ${suffix}` };
     }
     const copy = [...messages] as Record<string, unknown>[];
     copy[lastUser] = { ...msg, content: parts };
@@ -202,9 +208,10 @@ export function tuneModelPayload(
   } else {
     // ── P3: non-thinking sampling row
     if (entry.nonThinking) changed = applySampling(out, entry.nonThinking) || changed;
-    // ── P5: model-native off-switch
+    // ── P5: model-native off-switch (per-model token, Qwen3.x by default)
     if (envFlag("LPB_NO_THINK_SUFFIX", true)) {
-      const messages = appendNoThink(out.messages);
+      const suffix = entry.noThinkSuffix !== undefined ? entry.noThinkSuffix : NO_THINK_SUFFIX;
+      const messages = suffix ? appendNoThink(out.messages, suffix) : undefined;
       if (messages) {
         out.messages = messages;
         changed = true;
