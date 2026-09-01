@@ -1,7 +1,8 @@
 # Qwen Thinking on Mainstream Pi (post-de-fork design)
 
 **Last updated:** 2026-09-01
-**Status:** Budget + sampling + off-switch design — plugin-side payload tuning, current
+**Status:** Model-driven payload tuning (per-model catalog) + generic payload
+capture — plugin-side, current
 **Supersedes as source of truth:** the fork-era payload logic in `lpb-stack/pi`
 (retired 2026-08-31, last state at tag `pre-defork-0.0.71`)
 **Background docs:** [thinking-support.md](thinking-support.md) (root cause +
@@ -24,7 +25,7 @@ compat knob plus one plugin payload hook:
 compat.thinkingTokenBudgetField = "thinking_budget_tokens"
 
 // extensions/index.ts — the payload hook (P2 + P3 + P5, §5)
-pi.on("before_provider_request", (event, ctx) => tuneQwenPayload(event.payload, ...))
+pi.on("before_provider_request", (event, ctx) => tuneModelPayload(event.payload, ...))
 ```
 
 pi (v0.84.3+, PR #8275) computes a per-level budget — minimal 1024 / low 2048 /
@@ -35,11 +36,12 @@ everything else pi can send (`reasoning_effort`, `chat_template_kwargs.*`) is
 ignored or unnecessary.
 
 On top of that, the plugin's `before_provider_request` handler tunes the final
-wire payload for Qwen models only (mainstream pi and the config repo stay
-untouched — **all Qwen tuning lives in this plugin**):
+wire payload for **catalogued models** (per-model parameter file, §5.0 —
+mainstream pi and the config repo stay untouched, **all tuning lives in this
+plugin**). Models not in the catalog pass through with default pi behavior:
 
-- **P2** — raises the lower budget rungs (minimal 1024→2048, low 2048→3072)
-- **P3** — sends vendor-recommended sampling per mode (Qwen model card values)
+- **P2** — per-model budget table; the Qwen3.8-27B entry raises the lower rungs (minimal 1024→2048, low 2048→3072)
+- **P3** — per-model vendor-recommended sampling per mode (Qwen model card values)
 - **P5** — appends the model-native `/no_think` suffix at the off level
 
 Design goal: the simplest and most efficient way to have full thinking
@@ -49,7 +51,7 @@ intentionally **not** done, and how to re-enable or revert anything.
 
 ## 2. Wire format (verified, 2026-09-01)
 
-Actual outgoing payload shapes (via `QWEN_PAYLOAD_DEBUG=1`, §6).
+Actual outgoing payload shapes (via `LPB_PAYLOAD_DEBUG=1`, §6).
 
 **Thinking level `medium`** (thinking ON):
 
@@ -131,7 +133,8 @@ result.compat = {
 ```
 
 `extensions/index.ts` additionally registers the `before_provider_request`
-handler that calls `tuneQwenPayload()` from `lib/payload-tuning.ts` (§5).
+handler that calls `tuneModelPayload()` from `lib/payload-tuning.ts` (§5);
+what is tuned comes from the per-model catalog (§5.0).
 
 Deliberately removed on 2026-08-31 (de-fork cleanup):
 
@@ -147,14 +150,42 @@ Deliberately removed on 2026-08-31 (de-fork cleanup):
 `compat` — and read §6 before doing so. The unit test
 `test/model-mapping.test.ts` asserts the dead fields are ABSENT.
 
-## 5. Payload tuning (`lib/payload-tuning.ts`) — P2 + P3 + P5
+## 5. Payload tuning (`lib/payload-tuning.ts` + `lib/model-params.ts`) — P2 + P3 + P5
 
 Applied in `before_provider_request`: pi passes the **final** wire payload,
-and the handler's return value replaces it. Scoped to Qwen model ids (same
-name regex as `mapToProviderModel`, now shared as `isQwenModelName`); FLM
-builds (separate template/backend pipeline) and non-Qwen models pass through
-untouched. Never mutates the input; never throws (a tuning bug must not break
-a request).
+and the handler's return value replaces it. What is tuned is decided by the
+**per-model catalog** (§5.0): only wire model ids present in the user or
+plugin catalog tier are touched — everything else (other model families, FLM
+builds, uncatalogued Qwen) passes through with **default pi behavior**.
+Never mutates the input; never throws (a tuning bug must not break a request).
+
+### 5.0 — Per-model parameter file (the catalog)
+
+Two tiers, merged per model id (user wins per section/field):
+
+| Tier | Path | Notes |
+|---|---|---|
+| User | `~/.pi/agent/model-params.json` (override: `LPB_MODEL_PARAMS_FILE`) | Optional — missing file is silent; host-volume persistent like settings.json; gitignored in the config repo; edits apply on the next request (mtime-checked, no pi restart) |
+| Plugin | `lib/model-params.json` | Shipped with the plugin, versioned with the stack; seeds the models the stack runs (Qwen3.8-27B-GGUF: card rows from P3 + budgets from P2) |
+
+Schema (every section and field optional, partial rows allowed):
+
+```json
+{
+  "<wire model id>": {
+    "budgets":     { "minimal": 2048, "low": 3072, "medium": 8192, "high": 16384 },
+    "thinking":    { "temperature": 1.0, "top_p": 0.95, "top_k": 20, "min_p": 0.0, "presence_penalty": 0.0, "repetition_penalty": 1.0 },
+    "coding":      { "temperature": 0.6 },
+    "nonThinking": { "temperature": 0.7, "top_p": 0.8, "top_k": 20, "min_p": 0.0, "presence_penalty": 1.5, "repetition_penalty": 1.0 }
+  }
+}
+```
+
+Per-field precedence (highest wins): fields already in the wire payload
+(pi `model.samplingParams`, user config) > user tier > plugin tier. The hook
+only fills fields the payload lacks — explicit values are never overwritten.
+A corrupt file warns once per change and is ignored (the other tier still
+applies). Tuning a new model = adding its wire id to a tier — no code change.
 
 ### P2 — thinking budget table
 
@@ -167,7 +198,8 @@ visible answer** — reproduced 2026-09-01 on Qwen3.8-27B: at a 400-token
 completion cap the un-suffixed prompt used all 400 tokens on thinking
 (1606 thinking chars, empty content, `finish_reason=length`).
 
-The plugin rewrites the budget per level (re-clamped to
+The plugin rewrites the budget per level **from the model's catalog entry**
+(re-clamped to
 `max_completion_tokens − 1024`, mirroring pi's `MIN_ANSWER_TOKENS` rule;
 xhigh/max map to high, same as pi):
 
@@ -180,15 +212,17 @@ xhigh/max map to high, same as pi):
 
 Alternative considered: pi reads a `thinkingBudgets` user setting
 (`settings-manager.getThinkingBudgets()`), so the table could live in
-`settings.json`. Rejected: stack policy keeps **all** Qwen tuning in the
-plugin (no config-repo surface to drift out of sync with the model).
+`settings.json`. Rejected: stack policy keeps **all** model tuning in the
+plugin (the catalog file, §5.0 — no config-repo surface to drift out of sync
+with the model).
 
 ### P3 — vendor-recommended sampling
 
 Today's stack sent **no** sampling fields; the server fell back to its
 defaults (temp 0.8, top_k 40, min_p 0.05, no presence penalty). Qwen model
 cards recommend explicit per-mode sampling. Values follow **the served model's
-card** (Qwen3.8-27B, https://huggingface.co/Qwen/Qwen3.8-27B):
+card** (Qwen3.8-27B, https://huggingface.co/Qwen/Qwen3.8-27B) — seeded into
+the catalog (§5.0); per-model values live in the file, not in code:
 
 | Mode | temp | top_p | top_k | min_p | presence_penalty | rep_penalty |
 |---|---|---|---|---|---|---|
@@ -198,16 +232,17 @@ card** (Qwen3.8-27B, https://huggingface.co/Qwen/Qwen3.8-27B):
 
 - The `coding` profile (temp 0.6) comes from the sibling Qwen3.6-35B-A3B card's
   "precise coding" row — intended for coding-heavy subagents. Select it with
-  `QWEN_SAMPLING_PROFILE=coding` (default: `general`).
+  `LPB_SAMPLING_PROFILE=coding` (default: `general`); the `coding` catalog row
+  is merged over the `thinking` row.
 - **Card discrepancy (documented, decision made):** the Qwen3.6-35B-A3B card
   recommends `presence_penalty = 1.5` for thinking/general, while the
   Qwen3.8-27B card (our served model) recommends `0.0`. We follow the served
-  model's card. If per-model profiles are ever needed, the hook reads the
-  model id — extend `QWEN_THINKING_SAMPLING` then.
+  model's card. A different model's values are a separate catalog entry
+  (§5.0) — no code change.
 - `min_p: 0.0` is sent explicitly because the server default is 0.05 (the
   cards say 0.0).
 - **Precedence:** a field already present in the payload wins (e.g. future
-  `models.json` `samplingParams`); the profile only fills missing fields.
+  `models.json` `samplingParams`); the catalog rows only fill missing fields.
 
 ### P5 — `/no_think` off-switch (interim, until llama.cpp PR #22336)
 
@@ -216,8 +251,8 @@ default runs unbounded thinking (and, per the P2 evidence, can yield an empty
 visible answer). Qwen3.x models honor the model-native `/no_think` prompt
 suffix — a **soft** switch, "most recent instruction wins", no API field
 needed. The hook appends ` /no_think` to the **last user message** of the wire
-payload (session history keeps the original text; string and array content
-both supported; idempotent).
+payload **for catalogued models** (session history keeps the original text;
+string and array content both supported; idempotent).
 
 Evidence (2026-09-01, Qwen3.8-27B, identical sampling both runs, 400-token
 cap, same creative prompt):
@@ -236,14 +271,18 @@ waits on server-side PR #22336 (open, created 2026-04-24, unmerged as of
 
 | Env | Default | Effect |
 |---|---|---|
-| `QWEN_PAYLOAD_TUNING` | on | `off` disables ALL tuning (budget + sampling + suffix) |
-| `QWEN_SAMPLING_PROFILE` | `general` | `coding` selects the temp-0.6 thinking profile |
-| `QWEN_NO_THINK_SUFFIX` | on | `off` disables the `/no_think` append only |
-| `QWEN_PAYLOAD_DEBUG` | off | `1` logs the tuned payload (one JSON line per request) to `/tmp/pi-payload-capture.jsonl` |
+| `LPB_PAYLOAD_TUNING` | on | `off` disables ALL tuning (budget + sampling + suffix) |
+| `LPB_SAMPLING_PROFILE` | `general` | `coding` selects the `coding` catalog row (merged over `thinking`) |
+| `LPB_NO_THINK_SUFFIX` | on | `off` disables the `/no_think` append only |
+| `LPB_MODEL_PARAMS_FILE` | `~/.pi/agent/model-params.json` | User catalog path (§5.0) |
+| `LPB_PAYLOAD_DEBUG` | off | `1` logs the payload as left by the handler — **ALL models** — one JSON line per request to `/tmp/pi-payload-capture.jsonl` |
 
-These are bare names read from pi's process env. They are NOT bridged from
-devstack's `.env` (no config-repo change per stack policy); set them in pi's
-environment if ever needed — defaults cover the stack.
+`LPB_*` vars set in the devstack `.env` are promoted automatically: start.sh
+sources the workspace `.env` and exports every `LPB_*` key (plus the
+bare-name alias) into the container env, so `LPB_PAYLOAD_DEBUG=1` in `.env`
+is the whole wiring (restart pi to pick it up). The `QWEN_*` spellings from
+the 2026-09-01 first cut are retired — this layer is model-generic and the
+catalog decides what is tuned.
 
 ## 6. Deferred experiment: `compat.thinkingFormat: "qwen-chat-template"`
 ### — reviewed 2026-09-01 for Qwen3.8 (P4)
@@ -311,7 +350,7 @@ Upstream pi's `qwen-chat-template` branch (v0.84.4,
    ```
    (Top-level `thinkingFormat` would be dead config again — §4.)
 2. **Client-side re-injection check (NEW, mandatory):** with
-   `QWEN_PAYLOAD_DEBUG=1`, run a 2–3 tool-call session and confirm the
+   `LPB_PAYLOAD_DEBUG=1`, run a 2–3 tool-call session and confirm the
    captured payload's `messages` carry the prior assistant thinking blocks
    (or an equivalent text form). If not, this experiment is blocked on pi
    behavior — stop here.
@@ -331,11 +370,12 @@ Upstream pi's `qwen-chat-template` branch (v0.84.4,
 
 ## 7. Reproducing the verification (payload capture)
 
-Built-in: run pi with `QWEN_PAYLOAD_DEBUG=1` in the environment; the plugin
-logs one JSON line per request (model, thinkingLevel, thinking fields,
-sampling fields, `no_think` flag, all top-level keys) to
-`/tmp/pi-payload-capture.jsonl`. The line is the payload **as the plugin
-leaves it**.
+Built-in: set `LPB_PAYLOAD_DEBUG=1` (devstack `.env`; start.sh promotes it);
+the plugin logs one JSON line per request — **for every model, not just
+Qwen** (model, thinkingLevel, thinking fields, sampling fields, `no_think`
+flag, all top-level keys) to `/tmp/pi-payload-capture.jsonl`. The line is the
+payload **as the plugin's handler leaves it** (tuned view for catalogued
+models, raw view for everything else).
 
 Procedure: restart pi with the env set → send prompts at a few `/thinking`
 levels (on + off) → inspect the JSONL → compare against §2.
@@ -377,9 +417,9 @@ fork had):
    `LPB_PI_REF=pre-defork-0.0.71` instead of a branch.
 2. **Plugin:** `git revert` the 2026-08-31 cleanup commit
    (restores the dead top-level fields — harmless either way, since the fork
-   used its own payload path in `openai-completions.ts`). The 2026-09-01
-   payload-tuning commit is independent — `QWEN_PAYLOAD_TUNING=off`
-   disables it without any revert.
+   used its own payload path in `openai-completions.ts`). The payload-tuning
+   code is independent — `LPB_PAYLOAD_TUNING=off` disables it without any
+   revert.
 3. The fork tag is annotated and pushed; `devstack/patches/pi-case4-overflow.patch`
    stays available for opt-in builds.
 

@@ -23,7 +23,8 @@ import { registerAdminCommand } from "../lib/admin.js";
 import { oauthLogin } from "../lib/oauth.js";
 import { registerLemonadeProvider } from "../lib/provider.js";
 import { syncModelStore } from "../lib/sync-store.js";
-import { tuneQwenPayload, envFlag, writePayloadDebugLog } from "../lib/payload-tuning.js";
+import { tuneModelPayload, envFlag } from "../lib/payload-tuning.js";
+import { writePayloadDebugLog } from "../lib/payload-debug.js";
 
 export default async function lemonadeProvider(pi: ExtensionAPI): Promise<void> {
   const oauthBlock = {
@@ -84,23 +85,28 @@ export default async function lemonadeProvider(pi: ExtensionAPI): Promise<void> 
 
   registerAdminCommand(pi, oauthBlock);
 
-  // Qwen thinking payload tuning (P2 budget table, P3 vendor sampling,
-  // P5 /no_think off-switch). Runs on pi's `before_provider_request` event:
-  // the handler receives the FINAL wire payload and its return value
-  // replaces it — all Qwen tuning stays in this plugin (mainstream pi is
-  // untouched). See lib/payload-tuning.ts + docs/qwen-thinking-mainstream-pi.md.
-  // QWEN_PAYLOAD_DEBUG=1: log the tuned payload to /tmp/pi-payload-capture.jsonl.
+  // Model-driven payload tuning (P2 budgets, P3 vendor sampling,
+  // P5 /no_think off-switch). Runs on pi's `before_provider_request`
+  // event: the handler receives the FINAL wire payload and its return
+  // value replaces it. What is tuned is decided by the per-model catalog
+  // (lib/model-params.ts + lib/model-params.json, user tier in
+  // ~/.pi/agent/model-params.json) — uncatalogued models pass through
+  // with default pi behavior. All tuning stays in this plugin
+  // (mainstream pi is untouched). Env: LPB_PAYLOAD_TUNING (master),
+  // LPB_SAMPLING_PROFILE, LPB_NO_THINK_SUFFIX, LPB_MODEL_PARAMS_FILE.
+  // LPB_PAYLOAD_DEBUG=1 (devstack .env): log the payload as left by this
+  // handler for ALL models to /tmp/pi-payload-capture.jsonl.
   pi.on("before_provider_request", (event: { payload?: Record<string, unknown> }, ctx?: { thinkingLevel?: string; model?: { id?: string } }) => {
     const payload = event?.payload;
     if (!payload || typeof payload !== "object") return undefined;
     let tuned: Record<string, unknown> | undefined;
     try {
-      tuned = tuneQwenPayload(payload, { thinkingLevel: ctx?.thinkingLevel });
+      tuned = tuneModelPayload(payload, { thinkingLevel: ctx?.thinkingLevel });
     } catch {
       // Tuning must never break a request — pass through untouched.
       tuned = undefined;
     }
-    if (envFlag("QWEN_PAYLOAD_DEBUG", false)) {
+    if (envFlag("LPB_PAYLOAD_DEBUG", false)) {
       writePayloadDebugLog(tuned ?? payload, {
         model: ctx?.model?.id,
         thinkingLevel: ctx?.thinkingLevel,

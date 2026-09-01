@@ -30,8 +30,8 @@ function isReasoningByHeuristic(m: LemonadeModelInfo): boolean {
  * Detect Qwen3.x+ models that support the `enable_thinking` protocol
  * via OpenAI-compatible API, by model NAME. Qwen3.x, QwQ, and
  * Qwen2.5-Thinking models emit thinking tokens and respond to the
- * `enable_thinking` parameter. Exported: also used by payload-tuning.ts
- * on the wire payload (where only the model id is available).
+ * `enable_thinking` parameter. (Payload tuning no longer gates on this —
+ * the per-model catalog in lib/model-params.ts decides what is tuned.)
  */
 export function isQwenModelName(name: string): boolean {
   const n = (name || "").toLowerCase();
