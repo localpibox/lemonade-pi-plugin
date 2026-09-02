@@ -206,7 +206,18 @@ dead, and the two-model-type formula + clamp was harder to audit than six
 explicit numbers. The server's `prompt + max_tokens ≤ n_ctx` preflight
 remains the real overflow guard — catalog values are trusted as written.
 Seed the current stack: Qwen thinking models 16384 (MTP models normalized
-up from the formula's 15728), small models 4096.
+up from the formula's 15728), Gemma 4 26B at 8192 (card documents no
+output length; 4096 is too strict for a thinking-capable agent model),
+other small models 4096.
+
+Vendor guidance (Qwen3.8-27B card, "Best Practices"): the per-mode sampling
+rows in the catalog match the card verbatim; for **agentic tasks within the
+1M (YaRN-scaled) window** the card suggests reasoning max 262,144 + final
+response max 131,072. At our native 262k window the 16384 interactive
+ceiling is a policy choice (local generation time + the P2 empty-answer
+failure mode), not a card violation — raise a model's `maxTokens` when
+longer agentic answers are wanted (prompt headroom stays >240k well past
+32768).
 
 Per-field precedence (highest wins): fields already in the wire payload
 (pi `model.samplingParams`, user config) > user tier > plugin tier. The hook
