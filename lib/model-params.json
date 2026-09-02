@@ -1,5 +1,6 @@
 {
   "Qwen3.8-27B-GGUF": {
+    "maxTokens": 16384,
     "budgets": {
       "minimal": 2048,
       "low": 3072,

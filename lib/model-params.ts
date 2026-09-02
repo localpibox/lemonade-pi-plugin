@@ -1,7 +1,8 @@
 /**
  * @lemonade/lemonade-provider
  *
- * Per-model parameter catalog (thinking budgets + vendor sampling values).
+ * Per-model parameter catalog (response ceilings, thinking budgets +
+ * vendor sampling values).
  *
  * Two tiers, merged per model id (user wins per section/field):
  *
@@ -14,14 +15,15 @@
  *      stack actually runs.
  *
  * FILE MEMBERSHIP IS THE TUNING GATE: a wire model id that is in neither
- * tier passes through with DEFAULT PI BEHAVIOR — no budget rewrite, no
- * sampling injection, no /no_think suffix. To tune a model, add its wire
- * id to one of the tiers.
+ * tier passes through with DEFAULT PI BEHAVIOR — no ceiling override, no
+ * budget rewrite, no sampling injection, no /no_think suffix. To tune a
+ * model, add its wire id to one of the tiers.
  *
  * Schema (every section and field optional; partial rows allowed):
  *
  * {
  *   "<wire model id>": {
+ *     "maxTokens":   16384,
  *     "budgets":     { "minimal": 2048, "low": 3072, "medium": 8192, "high": 16384 },
  *     "thinking":    { "temperature": 1.0, "top_p": 0.95, "top_k": 20,
  *                      "min_p": 0.0, "presence_penalty": 0.0, "repetition_penalty": 1.0 },
@@ -66,6 +68,16 @@ export interface Budgets {
 }
 
 export interface ModelParamsEntry {
+  /**
+   * Response ceiling (max_completion_tokens) in tokens. Exact value — the
+   * retired ctx-ratio formula (env + 0.06/0.125 constants + 16384 clamp)
+   * is gone; this field is the single ceiling source. Applied at MODEL SYNC
+   * (model store), NOT per request: a change takes effect on the next model
+   * re-sync (pi restart or refresh), unlike budgets/sampling which apply on
+   * the next request. Absent → default pi behavior (server config
+   * max_new_tokens, else 4096).
+   */
+  maxTokens?: number;
   /** Per-level thinking budget (P2). Absent → pi's own budget stands. */
   budgets?: Budgets;
   /** Vendor sampling for thinking mode (P3), `general` profile. */
@@ -169,6 +181,8 @@ export function resolveModelEntry(modelId: string): ModelParamsEntry | undefined
   const noThinkSuffix =
     over?.noThinkSuffix !== undefined ? over.noThinkSuffix : base?.noThinkSuffix;
   if (noThinkSuffix !== undefined) merged.noThinkSuffix = noThinkSuffix;
+  const maxTokens = over?.maxTokens ?? base?.maxTokens;
+  if (typeof maxTokens === "number" && maxTokens > 0) merged.maxTokens = maxTokens;
   return merged;
 }
 

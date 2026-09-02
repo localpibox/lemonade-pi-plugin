@@ -173,6 +173,7 @@ Schema (every section and field optional, partial rows allowed):
 ```json
 {
   "<wire model id>": {
+    "maxTokens":   16384,
     "budgets":     { "minimal": 2048, "low": 3072, "medium": 8192, "high": 16384 },
     "thinking":    { "temperature": 1.0, "top_p": 0.95, "top_k": 20, "min_p": 0.0, "presence_penalty": 0.0, "repetition_penalty": 1.0 },
     "coding":      { "temperature": 0.6 },
@@ -186,6 +187,26 @@ Schema (every section and field optional, partial rows allowed):
 the Qwen3.x `/no_think` token, empty string disables the suffix for that
 model, other values are used verbatim (other model families may need their
 own model-native token).
+
+`maxTokens` is the per-model response ceiling (`max_completion_tokens`) in
+tokens — an exact value, no formula. It is applied at **model sync** (model
+store), not per request: a change takes effect on the next model re-sync (pi
+restart or refresh), unlike budgets/sampling which apply on the next request.
+Absent → default pi behavior (server config `max_new_tokens`, else 4096).
+
+It **replaced the retired ctx-ratio ceiling (2026-09-02)**: the
+`LPB_MAX_TOKENS_CONTEXT_RATIO` devstack env chain (bridged to
+`MAX_TOKENS_CONTEXT_RATIO`, never read), the plugin's
+`DEFAULT_MAX_TOKENS_CONTEXT_RATIO` env read (set by nothing — dead since
+day one; always fell back to 0.125), the 0.06 MTP / 0.125 non-MTP ratios,
+the 16384 clamp, and the `isMtpModel` name heuristic are all gone. Rationale:
+the ratio's protective work was done by the 16384 clamp anyway (0.06 and
+0.125 produced identical wire behavior at a 262k window), the env read was
+dead, and the two-model-type formula + clamp was harder to audit than six
+explicit numbers. The server's `prompt + max_tokens ≤ n_ctx` preflight
+remains the real overflow guard — catalog values are trusted as written.
+Seed the current stack: Qwen thinking models 16384 (MTP models normalized
+up from the formula's 15728), small models 4096.
 
 Per-field precedence (highest wins): fields already in the wire payload
 (pi `model.samplingParams`, user config) > user tier > plugin tier. The hook
@@ -304,8 +325,9 @@ Upstream pi's `qwen-chat-template` branch (v0.84.4,
 **Why it is deferred — not broken, just unverified against this server:**
 
 1. **`preserve_thinking: true`** keeps prior thinking blocks in context across
-   turns → changes context accounting; interaction with the 0.06 maxTokens
-   ratio, compaction, and the Case 4 overflow guard is untested.
+   turns → changes context accounting; interaction with the per-model
+   maxTokens ceiling (§5.0), compaction, and the Case 4 overflow guard is
+   untested.
 2. **No per-request thinking-OFF.** `enable_thinking: false` (per-request
    off-toggle) is deprecated in llama.cpp ≥ b8322; PR #22336 is still open, so
    the format still cannot implement an "off" level (we have P5 meanwhile).
@@ -371,7 +393,8 @@ Upstream pi's `qwen-chat-template` branch (v0.84.4,
    emitted in `content`, skipped tool calls, and empty `think` blocks
    (#22398 / #22507 signatures).
 6. Measure context growth + compaction interaction (preserve_thinking grows
-   every assistant turn; check the 0.06-ratio headroom and Case 4 guard).
+   every assistant turn; check the maxTokens ceiling headroom and Case 4
+   guard).
 7. Regression? Revert = delete the one `thinkingFormat` line (or
    `git revert` the commit).
 
@@ -441,6 +464,7 @@ fork had):
 | P4: `preserve_thinking` / `qwen-chat-template` experiment | **DEFERRED** — reviewed for Qwen3.8 (§6): model-card-blessed, but client-side re-injection check + multi-turn tool-loop validation are prerequisites | §6 |
 | P5: off-level thinking switch | **DONE in plugin (soft)** — `/no_think` suffix, §5 P5; hard off awaits #22336 | this commit |
 | P6: xhigh/max budget headroom (raise the 16384/14704 clamp) | **SKIPPED** — user decision 2026-09-01 (not worth it for interactive use; revisit only for background subagent workloads) | — |
+| Ceiling: per-model `maxTokens` catalog field (replaces the ctx-ratio env chain) | **DONE in plugin** — 2026-09-02; ratios, env read, clamp, and MTP heuristic retired, §5.0 | this change |
 | `reasoning_budget_tokens` per-request alias (llama.cpp PR #23116) | Watch; no action — we send the honored `thinking_budget_tokens` name | §3 |
 | Not worth pursuing locally | `reasoning_effort` (ignored by llama.cpp; cloud concept), vLLM/SGLang-specific params (different backends) | §3 |
 

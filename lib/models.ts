@@ -5,7 +5,7 @@
  */
 
 import type { LemonadeModelInfo } from "./types.js";
-import { DEFAULT_MAX_TOKENS_CONTEXT_RATIO, QWEN_REASONING_MAX_TOKENS_CONTEXT_RATIO } from "./constants.js";
+import { resolveModelEntry } from "./model-params.js";
 
 export function isReasoningModel(recipe: string | undefined): boolean {
   if (!recipe) return false;
@@ -51,22 +51,6 @@ function isQwenReasoningModel(m: LemonadeModelInfo): boolean {
 }
 
 /**
- * Detect Qwen MTP (Multi-Token Prediction) models.
- * These use llama.cpp's MTP reasoning path and produce reasoning_content
- * via the thinking block.
- */
-function isMtpModel(m: LemonadeModelInfo): boolean {
-  const name = (m.name || m.id || "").toLowerCase();
-  const recipe = (m.recipe || "").toLowerCase();
-  const labels = (m.labels ?? []).join(" ").toLowerCase();
-  // MTP models typically have "mtp" in their name or recipe
-  if (/mtp/.test(name) || /mtp/.test(recipe)) return true;
-  // MTP models have "mtp-gguf" in labels
-  if (/mtp-gguf/.test(labels)) return true;
-  return false;
-}
-
-/**
  * The FastFlowLM (FLM) backend's chat template only accepts
  * system/user/assistant/tool roles — it raises "Unexpected message role." for the
  * `developer` role that Pi sends to reasoning models
@@ -92,8 +76,9 @@ function detectVision(m: LemonadeModelInfo): boolean {
 
 /**
  * Map Lemonade model info to Pi provider model shape.
- * Applies Qwen-specific logic: dynamic maxTokens ratio, thinking support,
- * vision detection, and MTP/FLM backend awareness.
+ * Applies the per-model response ceiling from the tuning catalog
+ * (maxTokens — exact values, no formula), thinking support, vision
+ * detection, and FLM backend awareness.
  */
 export function mapToProviderModel(m: LemonadeModelInfo) {
   const input: ("text" | "image")[] = ["text"];
@@ -116,23 +101,20 @@ export function mapToProviderModel(m: LemonadeModelInfo) {
     (cfg["context_len"] as number) ??
     128000;
 
-  // Qwen-specific: dynamic maxTokens based on model type
-  // Qwen reasoning models need a lower ratio because thinking blocks
-  // (10-20k tokens) consume a large portion of the context window.
+  // Response ceiling (max_completion_tokens): the per-model `maxTokens`
+  // catalog field wins (exact value — user tier over plugin tier, see
+  // lib/model-params.ts); otherwise the model's own server config; otherwise
+  // the default. Catalog membership is the single tuning gate — uncatalogued
+  // models get default behavior (the Qwen ctx-ratio ceiling was retired
+  // 2026-09-02 — docs/qwen-thinking-mainstream-pi.md §5.0). The server's
+  // prompt+max_tokens preflight is the real overflow guard, so catalog
+  // values are trusted as written.
   const isQwen = isQwenReasoningModel(m);
-  const isMtp = isMtpModel(m);
-  let maxTokens =
-    (cfg["max_new_tokens"] as number) ??
-    (cfg["max_tokens"] as number) ??
-    4096;
-
-  if (isQwen) {
-    // Apply ratio to context window for dynamic sizing
-    const ratio = isMtp ? QWEN_REASONING_MAX_TOKENS_CONTEXT_RATIO : DEFAULT_MAX_TOKENS_CONTEXT_RATIO;
-    maxTokens = Math.floor(contextWindow * ratio);
-    // Clamp to a reasonable maximum
-    maxTokens = Math.min(maxTokens, 16384); // ~16k for reasoning, ~32k for non-reasoning
-  }
+  const catalogMaxTokens = resolveModelEntry(m.id)?.maxTokens;
+  const maxTokens =
+    typeof catalogMaxTokens === "number" && catalogMaxTokens > 0
+      ? catalogMaxTokens
+      : ((cfg["max_new_tokens"] as number) ?? (cfg["max_tokens"] as number) ?? 4096);
 
   // Determine reasoning flag: combine recipe-based, heuristic-based,
   // and Qwen model detection. But exclude FLM backends (which reject developer role).
