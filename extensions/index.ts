@@ -86,7 +86,7 @@ export default async function lemonadeProvider(pi: ExtensionAPI): Promise<void> 
   registerAdminCommand(pi, oauthBlock);
 
   // Model-driven payload tuning (P2 budgets, P3 vendor sampling,
-  // P5 /no_think off-switch). Runs on pi's `before_provider_request`
+  // P5 off-level wire off-switch + /no_think fallback). Runs on pi's `before_provider_request`
   // event: the handler receives the FINAL wire payload and its return
   // value replaces it. What is tuned is decided by the per-model catalog
   // (lib/model-params.ts + lib/model-params.json, user tier in

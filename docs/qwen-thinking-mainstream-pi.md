@@ -1,16 +1,20 @@
 # Qwen Thinking on Mainstream Pi (post-de-fork design)
 
-**Last updated:** 2026-09-01
+**Last updated:** 2026-09-03
 **Status:** Model-driven payload tuning (per-model catalog) + generic payload
-capture — plugin-side, current
+capture — plugin-side, current. P5 is now a WIRE-LEVEL hard off-switch
+(`offParams: { enable_thinking: false }`), validated 2026-09-03.
 **Supersedes as source of truth:** the fork-era payload logic in `lpb-stack/pi`
 (retired 2026-08-31, last state at tag `pre-defork-0.0.71`)
 **Background docs:** [thinking-support.md](thinking-support.md) (root cause +
 server validation, fork-era wire format),
 [thinking-validation-2026-08-25.md](thinking-validation-2026-08-25.md) (raw
-test tables + server-side action items)
+test tables + server-side action items),
+[validation-2026-09-03/](validation-2026-09-03/) (raw JSONL for the wire-level
+off-switch validation — `enable_thinking` vs `/no_think`, two models)
 **Validated against:** pi 0.84.4 (registry, no fork) + plugin on `lpb-dev` +
-lemonade server (llama.cpp **b10375**, fingerprint `b10375-ba360efe1`) serving
+lemonade server (v11.7.0; the 2026-08-25/09-01 findings were taken on
+llama.cpp **b10375**, fingerprint `b10375-ba360efe1`) serving
 `Qwen3.8-27B-GGUF` (unsloth UD-Q4_K_XL)
 
 ---
@@ -42,7 +46,7 @@ plugin**). Models not in the catalog pass through with default pi behavior:
 
 - **P2** — per-model budget table; the Qwen3.8-27B entry raises the lower rungs (minimal 1024→2048, low 2048→3072)
 - **P3** — per-model vendor-recommended sampling per mode (Qwen model card values)
-- **P5** — appends the model-native `/no_think` suffix at the off level
+- **P5** — at the off level: wire-level hard off-switch `enable_thinking: false` from the catalog `offParams` row (validated per-request on the running server, 2026-09-03); the model-native `/no_think` suffix is now only the fallback for models/servers without a wire off
 
 Design goal: the simplest and most efficient way to have full thinking
 functionality with Qwen models + lemonade-pi-plugin + a mainstream pi version.
@@ -71,32 +75,38 @@ Actual outgoing payload shapes (via `LPB_PAYLOAD_DEBUG=1`, §6).
 }
 ```
 
-**Thinking level `off`** (thinking OFF — P5 active):
+**Thinking level `off`** (thinking OFF — P5 active, wire-level hard off):
 
 ```json
 {
   "model": "Qwen3.8-27B-GGUF",
+  "enable_thinking": false,
   "max_completion_tokens": 16384,
   "temperature": 0.7, "top_p": 0.8, "top_k": 20,
   "min_p": 0.0, "presence_penalty": 1.5, "repetition_penalty": 1.0,
-  "messages": "[... last user message ends with ' /no_think' ...]",
+  "messages": "[... — untouched, no suffix ...]",
   "stream": true, "store": true,
   "stream_options": { "include_usage": true }
 }
 ```
 
 Note: at `off` there is **no** `reasoning_effort` and **no** budget field —
-pi strips both. Without the `/no_think` suffix the server's `--reasoning on`
-startup default runs **unbounded** thinking against the full
-`max_completion_tokens` (minutes, and the visible answer can be empty — see
-the P5 evidence in §5).
+pi strips both, and the plugin supplies the hard off via
+`offParams: { "enable_thinking": false }` (§5 P5). Without it the server's
+`--reasoning on` startup default runs **unbounded** thinking against the full
+`max_completion_tokens` (minutes of generation, and the visible answer can be
+empty — reproduced 2026-09-03: heavy task + 2048 budget — 2/2
+`finish_reason=length` + EMPTY content; with `enable_thinking: false` the
+same task completes in ~150 tokens of clean JSON). The `/no_think` prompt
+suffix is NOT sufficient — it was measured ineffective on this server (0/7
+runs suppressed; §5 P5).
 
 Fields **not** sent, and why that is fine:
 
 | Field | Why absent | Effect |
 |---|---|---|
 | `chat_template_kwargs` | Plugin does not set `compat.thinkingFormat` (§5 of the deferred experiment, §6) | Thinking runs on the server's startup config (`--reasoning on`); the budget still applies and is honored |
-| top-level `enable_thinking` | The `qwen-chat-template` format branch never activates | Same — server default governs. Per-request `enable_thinking=false` is deprecated/ignored until llama.cpp PR #22336 lands (still **open** as of 2026-09-01) |
+| top-level `enable_thinking` | **SENT by the plugin at the off level** (`offParams`, §5 P5) | ✅ HONORED per-request on the running server (v11.7.0) — validated 2026-09-03: `false` = hard off (0 reasoning, 7/7 runs, two Qwen models), `true` re-enables, absent = server default. The 2026-09-01 claim ("deprecated/ignored until llama.cpp PR #22336") is superseded — the current server build honors the top-level field; the mechanism (llama.cpp core vs the lemonade wrapper translating it) is unverified but behaviorally irrelevant to the plugin |
 | `reasoning_budget_tokens` (alias) | Not honored per-request on b10375 (copy-loop bug; fix is open PR #23116) | We send the honored name, `thinking_budget_tokens` |
 | `reasoning_effort` **is** sent by pi (when thinking ON) | Generic reasoning-model param | Backend ignores it — harmless, and it is our level signal for the payload hook |
 
@@ -112,7 +122,9 @@ Verified against the lemonade/llama.cpp server (**b10375**, released
 | `reasoning_budget_tokens: 0` | ⚠️ NO-OP = unlimited (NOT a soft cap — old comments claimed otherwise) |
 | `reasoning_effort` (top-level or in `chat_template_kwargs`) | ❌ IGNORED (only cloud Qwen providers — DashScope, SGLang, vLLM — parse it) |
 | `thinking_budget` (top-level or in `chat_template_kwargs`) | ❌ IGNORED |
-| `chat_template_kwargs.enable_thinking: false` (old off-toggle workaround) | ❌ DEPRECATED in llama.cpp ≥ b8322; true per-request off waits on PR #22336 (open) |
+| `chat_template_kwargs.enable_thinking: false` (old off-toggle workaround) | ❌ DEPRECATED in llama.cpp ≥ b8322 — use the TOP-LEVEL field instead |
+| `enable_thinking: false` (top-level) | ✅ HONORED per-request on the running server (v11.7.0, validated 2026-09-03) — the P5 hard off-switch; the b10375-era "not honored" finding is superseded |
+| `enable_thinking: true` (top-level) | ✅ HONORED per-request — re-enables thinking on models whose server default is on (validated 2026-09-03) |
 | `temperature`, `top_p`, `top_k`, `min_p`, `presence_penalty`, `repetition_penalty` (top-level) | ✅ HONORED — per-request overrides (probe 2026-09-01: all six accepted on b10375). Server defaults if absent: temp 0.8, top_k 40, top_p 0.95, min_p 0.05, repeat_penalty 1.0, presence_penalty 0.0 |
 
 Validation evidence (budget → thinking chars / answer chars / wall time /
@@ -178,12 +190,22 @@ Schema (every section and field optional, partial rows allowed):
     "thinking":    { "temperature": 1.0, "top_p": 0.95, "top_k": 20, "min_p": 0.0, "presence_penalty": 0.0, "repetition_penalty": 1.0 },
     "coding":      { "temperature": 0.6 },
     "nonThinking": { "temperature": 0.7, "top_p": 0.8, "top_k": 20, "min_p": 0.0, "presence_penalty": 1.5, "repetition_penalty": 1.0 },
+    "offParams":   { "enable_thinking": false },
     "noThinkSuffix": "/no_think"
   }
 }
 ```
 
-`noThinkSuffix` is the per-model off-switch token (P5): default (absent) is
+`offParams` is a row of wire fields filled at the **off level** (P5,
+same fill-missing precedence as the sampling rows — an explicit payload
+value wins). Qwen entries ship `{ "enable_thinking": false }`: the running
+lemonade server (v11.7.0) honors it as a hard per-request off switch
+(validated 2026-09-03 — 0 reasoning in 7/7 runs across two Qwen models;
+`enable_thinking: true` re-enables, absent = server default). See §5 P5
+for the validation tables.
+
+`noThinkSuffix` is the per-model off-switch **token** (P5 fallback, used only
+when no wire `enable_thinking` field decides the level): default (absent) is
 the Qwen3.x `/no_think` token, empty string disables the suffix for that
 model, other values are used verbatim (other model families may need their
 own model-native token).
@@ -282,29 +304,55 @@ the catalog (§5.0); per-model values live in the file, not in code:
 - **Precedence:** a field already present in the payload wins (e.g. future
   `models.json` `samplingParams`); the catalog rows only fill missing fields.
 
-### P5 — `/no_think` off-switch (interim, until llama.cpp PR #22336)
+### P5 — off-level thinking switch (wire-level hard off since 2026-09-03)
 
 At the off level pi sends no thinking fields, so the server's `--reasoning on`
 default runs unbounded thinking (and, per the P2 evidence, can yield an empty
-visible answer). Qwen3.x models honor the model-native `/no_think` prompt
-suffix — a **soft** switch, "most recent instruction wins", no API field
-needed. The hook appends the model's off-switch token (catalog field
-`noThinkSuffix`, default `/no_think`) to the **last user message** of the
-wire payload **for catalogued models** (session history keeps the original
-text; string and array content both supported; idempotent).
+visible answer). The hook supplies the hard off from the catalog: the
+`offParams` row (fill-missing) — Qwen entries ship
+`{ "enable_thinking": false }`. When a wire `enable_thinking` field is
+present in either direction (explicit payload or `offParams`), the
+model-native `/no_think` text suffix is **skipped**; it remains the
+fallback (catalog `noThinkSuffix`, default `/no_think`) for
+models/servers without a wire off — appended to the **last user
+message** of the wire payload (session history keeps the original text;
+string and array content both supported; idempotent).
 
-Evidence (2026-09-01, Qwen3.8-27B, identical sampling both runs, 400-token
-cap, same creative prompt):
+**Validation (2026-09-03, raw data in** [validation-2026-09-03/](validation-2026-09-03/)**):**
 
-| Run | thinking chars | visible answer |
+*Qwen3.8-27B-GGUF, JSON-extraction task, `max_tokens=2048`, 3 runs each:*
+| case | reasoning chars | completion tokens |
 |---|---|---|
-| without suffix | 1606 (all 400 tokens) | **empty** (`finish_reason=length`) |
-| with `/no_think` | 1252 | full poem produced |
+| nothing sent (server default) | 136 / 353 / 355 | 64 / 122 / 121 — flaky |
+| `/no_think` appended | **381 / 398 / 443 — NOT suppressed** | 133 / 131 / 144 |
+| `enable_thinking: false` | **0 / 0 / 0** | 36 / 24 / 24 — deterministic |
+| `enable_thinking: true` | 290 | 106 — per-request toggle confirmed |
 
-It is soft, not hard: the model still thought ~1250 chars. A hard off
-waits on server-side PR #22336 (open, created 2026-04-24, unmerged as of
-2026-09-01). Once it lands, replace the suffix with
-`chat_template_kwargs.enable_thinking = false` and drop P5.
+*Generalization — Qwen3.5-4B-MTP-GGUF (thinking ON by server default; the
+FLM build was excluded: its thinking is off as a server-side parameter, so
+every case returns identical 24-token/0-reasoning answers and proves
+nothing):*
+| case | reasoning chars | completion tokens |
+|---|---|---|
+| baseline | 2366 / 6203 | 626 / 1637 — flaky |
+| `/no_think` | **1678 / 6477 — NOT suppressed** | 500 / 1790 |
+| `enable_thinking: false` | **0 / 0** | 24 / 24 (0.7—0.9 s) |
+
+*Failure chain reproduced + fixed — heavy extraction task, same 2048 budget
+(browser-validate.ts failure mode), 2 runs each:*
+| case | result |
+|---|---|
+| baseline | 2/2: `tok=2048`, `finish_reason=length`, **content EMPTY**, ~200 s |
+| `/no_think` | 2/2: `tok=2048`, `finish_reason=length`, **content EMPTY** |
+| `enable_thinking: false` | 2/2: `tok=149/178`, `finish_reason=stop`, valid JSON, ~25 s |
+
+Findings: (1) `/no_think` is ineffective on this server — 0/7
+thinking-on runs suppressed; (2) top-level `enable_thinking: false` is a
+hard, deterministic off (0 reasoning, 7/7); (3) it is a true **per-request
+toggle** — `true` re-enables, absent = server default. The earlier "waits
+on llama.cpp PR #22336" premise (b10375-era) is superseded for the running
+server (v11.7.0); whether the honor comes from llama.cpp core or the
+lemonade wrapper is behaviorally irrelevant to the plugin.
 
 ### Env surface (read at request time; defaults are correct for this stack)
 
@@ -312,7 +360,7 @@ waits on server-side PR #22336 (open, created 2026-04-24, unmerged as of
 |---|---|---|
 | `LPB_PAYLOAD_TUNING` | on | `off` disables ALL tuning (budget + sampling + suffix) |
 | `LPB_SAMPLING_PROFILE` | `general` | `coding` selects the `coding` catalog row (merged over `thinking`) |
-| `LPB_NO_THINK_SUFFIX` | on | `off` disables the `/no_think` append only |
+| `LPB_NO_THINK_SUFFIX` | on | `off` disables the `/no_think` fallback append only (the wire `offParams` is unaffected) |
 | `LPB_MODEL_PARAMS_FILE` | `~/.pi/agent/model-params.json` | User catalog path (§5.0) |
 | `LPB_PAYLOAD_DEBUG` | off | `1` logs the payload as left by the handler — **ALL models** — one JSON line per request to `/tmp/pi-payload-capture.jsonl` |
 
@@ -339,9 +387,10 @@ Upstream pi's `qwen-chat-template` branch (v0.84.4,
    turns → changes context accounting; interaction with the per-model
    maxTokens ceiling (§5.0), compaction, and the Case 4 overflow guard is
    untested.
-2. **No per-request thinking-OFF.** `enable_thinking: false` (per-request
-   off-toggle) is deprecated in llama.cpp ≥ b8322; PR #22336 is still open, so
-   the format still cannot implement an "off" level (we have P5 meanwhile).
+2. **Per-request thinking-OFF** (2026-09-03): the running server honors the
+   TOP-LEVEL `enable_thinking` per-request (validated — §5 P5), so the
+   earlier blocker is gone; the experiment is deferred for the remaining
+   reasons below and in the 2026-09-01 review, not for this one.
 3. The budget + sampling + suffix behavior is verified end-to-end and in
    daily use.
 
@@ -468,12 +517,12 @@ fork had):
 
 | Item | Status | Where tracked |
 |---|---|---|
-| P0 server: per-request `reasoning` toggle (llama.cpp PR #22336) | **Open upstream** (created 2026-04-24, unmerged 2026-09-01) — prerequisite for a HARD thinking-OFF; P5 (`/no_think`) is the soft interim | §5 P5; [thinking-validation-2026-08-25.md](thinking-validation-2026-08-25.md) §Prioritized |
+| P0 server: per-request thinking toggle | **DONE server-side (behaviorally, 2026-09-03)** — the running lemonade server (v11.7.0) honors top-level `enable_thinking` per-request in both directions; the upstream llama.cpp PR #22336 tracking is moot for this stack | §3, §5 P5 |
 | P1 server: `--reasoning-budget-message` = the trained early-stop sentence | **DONE** — applied on the lemonade box (user, 2026-09-01) | §3 |
 | P2: raise minimal/low budgets above the discouraged 1024 boundary | **DONE in plugin** — payload hook, §5 P2 | this commit |
 | P3: vendor-recommended sampling per mode | **DONE in plugin** — payload hook, §5 P3 (served-model card; discrepancy documented) | this commit |
 | P4: `preserve_thinking` / `qwen-chat-template` experiment | **DEFERRED** — reviewed for Qwen3.8 (§6): model-card-blessed, but client-side re-injection check + multi-turn tool-loop validation are prerequisites | §6 |
-| P5: off-level thinking switch | **DONE in plugin (soft)** — `/no_think` suffix, §5 P5; hard off awaits #22336 | this commit |
+| P5: off-level thinking switch | **DONE in plugin (hard)** — `offParams: { "enable_thinking": false }` at the off level (validated 2026-09-03); `/no_think` demoted to fallback, §5 P5 | this change |
 | P6: xhigh/max budget headroom (raise the 16384/14704 clamp) | **SKIPPED** — user decision 2026-09-01 (not worth it for interactive use; revisit only for background subagent workloads) | — |
 | Ceiling: per-model `maxTokens` catalog field (replaces the ctx-ratio env chain) | **DONE in plugin** — 2026-09-02; ratios, env read, clamp, and MTP heuristic retired, §5.0 | this change |
 | `reasoning_budget_tokens` per-request alias (llama.cpp PR #23116) | Watch; no action — we send the honored `thinking_budget_tokens` name | §3 |
@@ -492,4 +541,7 @@ defaults), b10375 release (2026-08-12)** · vLLM Reasoning Outputs docs ·
 SGLang PR #6089 + separate_reasoning docs · Budget Guidance (ACL 2026
 findings) · SelfBudgeter (ACL 2026) · TAB (arXiv 2604.05164) · CLEAR
 (arXiv 2606.03092) · Qwen3.6 preserve_thinking post-mortem (allanchan339,
-2026-05-02) · emergentmind Qwen3-thinking survey.
+(2026-05-02) · emergentmind Qwen3-thinking survey · **local wire-level
+off-switch validation 2026-09-03 (raw JSONL, validation-2026-09-03/): enable_thinking
+false/true/absent across Qwen3.8-27B-GGUF + Qwen3.5-4B-MTP-GGUF, /no_think
+ineffectiveness, starvation repro + fix**.

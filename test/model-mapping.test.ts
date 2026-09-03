@@ -41,7 +41,7 @@ check("qwen: no dead top-level thinkingFormat (budget-only design)", !("thinking
 check("qwen: compat.thinkingTokenBudgetField='thinking_budget_tokens'",
   (q as any).compat?.thinkingTokenBudgetField === "thinking_budget_tokens", (q as any).compat);
 check("qwen: no dead top-level reasoning_budget_tokens", !("reasoning_budget_tokens" in (q as any)), q);
-check("qwen: maxTokens=15728 (0.06 x 262144, clamped 16384)", (q as any).maxTokens === 15728, (q as any).maxTokens);
+check("qwen: maxTokens=16384 (catalog exact value — ctx-ratio retired 2026-09-02)", (q as any).maxTokens === 16384, (q as any).maxTokens);
 
 const g = mapToProviderModel(gemma);
 check("gemma: no thinkingTokenBudgetField (non-Qwen untouched)",

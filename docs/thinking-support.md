@@ -11,6 +11,14 @@
 > thinking is controlled by `thinking_budget_tokens` alone. Current design,
 > verified payload, deferred experiments and the revert path:
 > [qwen-thinking-mainstream-pi.md](qwen-thinking-mainstream-pi.md).
+>
+> **⚠️ Status update (2026-09-03):** the per-request reasoning toggle status in
+> §Prioritized (P0, "waits on llama.cpp PR #22336") is SUPERSEDED — the running
+> lemonade server (v11.7.0) honors top-level `enable_thinking` per-request in
+> both directions (validated 2026-09-03; raw data in
+> [validation-2026-09-03/](validation-2026-09-03/)). The plugin now sends it at
+> the off level via the catalog `offParams` row — see §5 P5 of
+> [qwen-thinking-mainstream-pi.md](qwen-thinking-mainstream-pi.md).
 
 ---
 

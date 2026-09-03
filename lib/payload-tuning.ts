@@ -23,20 +23,27 @@
  *          payload are filled — explicit payload values (pi
  *          model.samplingParams, user config) always win.
  *
- *   /no_think (P5) — at the off level (no budget field, no effort) the
- *          server's `--reasoning on` default would run UNBOUNDED thinking
- *          (the per-request toggle waits on llama.cpp PR #22336). The
- *          model-native off-switch token is appended to the LAST user
- *          message of the wire copy (string + array content, idempotent);
- *          session history keeps the original text. The token is
- *          per-model: entry `noThinkSuffix` (default: the Qwen3.x
- *          `/no_think` token; empty string disables it for that model).
- *          Soft switch until #22336 lands.
+ *   offParams / noThinkSuffix (P5) — at the off level (no budget field,
+ *          no effort) the server's `--reasoning on` default would run
+ *          UNBOUNDED thinking. The catalog `offParams` row (fill-missing)
+ *          supplies the wire-level hard off — Qwen entries ship
+ *          { "enable_thinking": false }, honored per-request by the
+ *          running lemonade server (validated 2026-09-03, two models,
+ *          0 reasoning in 7/7 runs; the earlier "waits on llama.cpp
+ *          PR #22336" note is stale). Whenever a wire `enable_thinking`
+ *          field is present in either direction (explicit payload or
+ *          offParams), the model-native `/no_think` text suffix is
+ *          skipped; it remains the fallback for models/servers without a
+ *          wire off — appended to the LAST user message of the wire copy
+ *          (string + array content, idempotent); session history keeps
+ *          the original text. The token is per-model: entry
+ *          `noThinkSuffix` (default: the Qwen3.x `/no_think` token;
+ *          empty string disables it for that model).
  *
  * Env (read at request time; defaults are correct for this stack):
  *   LPB_PAYLOAD_TUNING=off      master switch — disable ALL tuning
  *   LPB_SAMPLING_PROFILE=coding select the coding thinking row (default: general)
- *   LPB_NO_THINK_SUFFIX=off     disable the /no_think append only
+ *   LPB_NO_THINK_SUFFIX=off     disable the /no_think fallback append only
  *   LPB_MODEL_PARAMS_FILE=<p>   user catalog path (default: ~/.pi/agent/model-params.json)
  *   LPB_PAYLOAD_DEBUG=1         capture every payload (lib/payload-debug.ts)
  *
@@ -66,11 +73,12 @@ export function thinkingBudgetLevel(level: string | undefined): "minimal" | "low
 }
 
 /**
- * Fill sampling fields NOT already present in the payload, so explicit
- * user config (models.json samplingParams, etc.) wins. Returns true if
- * anything was added.
+ * Fill fields NOT already present in the payload, so explicit user
+ * config (models.json samplingParams, etc.) wins. Returns true if
+ * anything was added. Generic row applier — shared by the sampling rows
+ * (P3) and the off-level wire fields (P5 offParams).
  */
-export function applySampling(out: Record<string, unknown>, params: SamplingParams): boolean {
+export function applyFillRow(out: Record<string, unknown>, params: Record<string, unknown>): boolean {
   let changed = false;
   for (const [key, value] of Object.entries(params)) {
     if (value !== undefined && out[key] === undefined) {
@@ -79,6 +87,15 @@ export function applySampling(out: Record<string, unknown>, params: SamplingPara
     }
   }
   return changed;
+}
+
+/**
+ * Fill sampling fields NOT already present in the payload, so explicit
+ * user config (models.json samplingParams, etc.) wins. Returns true if
+ * anything was added.
+ */
+export function applySampling(out: Record<string, unknown>, params: SamplingParams): boolean {
+  return applyFillRow(out, params);
 }
 
 /**
@@ -208,8 +225,15 @@ export function tuneModelPayload(
   } else {
     // ── P3: non-thinking sampling row
     if (entry.nonThinking) changed = applySampling(out, entry.nonThinking) || changed;
-    // ── P5: model-native off-switch (per-model token, Qwen3.x by default)
-    if (envFlag("LPB_NO_THINK_SUFFIX", true)) {
+    // ── P5: wire-level off-switch (catalog offParams, fill-missing) —
+    //    Qwen entries ship { "enable_thinking": false }; the running
+    //    lemonade server honors it per-request (validated 2026-09-03).
+    if (entry.offParams) changed = applyFillRow(out, entry.offParams) || changed;
+    // ── P5: model-native off-switch token — FALLBACK only: skipped
+    //    whenever a wire `enable_thinking` field decides the level in
+    //    either direction (explicit payload or offParams above).
+    const wireDecides = out.enable_thinking === true || out.enable_thinking === false;
+    if (!wireDecides && envFlag("LPB_NO_THINK_SUFFIX", true)) {
       const suffix = entry.noThinkSuffix !== undefined ? entry.noThinkSuffix : NO_THINK_SUFFIX;
       const messages = suffix ? appendNoThink(out.messages, suffix) : undefined;
       if (messages) {

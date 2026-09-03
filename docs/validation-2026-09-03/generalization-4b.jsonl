@@ -1,0 +1,7 @@
+{"id":"baseline r1","tok":626,"fin":"stop","reason":2366,"empty":false,"s":"152.3"}
+{"id":"baseline r2","tok":1637,"fin":"stop","reason":6203,"empty":false,"s":"31.5"}
+{"id":"no_think_text r1","tok":500,"fin":"stop","reason":1678,"empty":false,"s":"9.8"}
+{"id":"no_think_text r2","tok":1790,"fin":"stop","reason":6477,"empty":false,"s":"40.9"}
+{"id":"wire_off r1","tok":24,"fin":"stop","reason":0,"empty":false,"s":"0.9"}
+{"id":"wire_off r2","tok":24,"fin":"stop","reason":0,"empty":false,"s":"0.7"}
+{"id":"wire_on r1","tok":514,"fin":"stop","reason":1771,"empty":false,"s":"10.8"}

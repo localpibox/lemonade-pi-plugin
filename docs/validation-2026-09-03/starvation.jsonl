@@ -1,0 +1,6 @@
+{"id":"baseline r1","elapsed":"207.1","completion_tokens":2048,"finish_reason":"length","content_empty":true,"reasoning_len":8127,"content_head":""}
+{"id":"baseline r2","elapsed":"199.6","completion_tokens":2048,"finish_reason":"length","content_empty":true,"reasoning_len":8603,"content_head":""}
+{"id":"no_think_text r1","elapsed":"203.3","completion_tokens":2048,"finish_reason":"length","content_empty":true,"reasoning_len":8421,"content_head":""}
+{"id":"no_think_text r2","elapsed":"165.8","completion_tokens":2048,"finish_reason":"length","content_empty":true,"reasoning_len":8632,"content_head":""}
+{"id":"wire_off r1","elapsed":"28.4","completion_tokens":149,"finish_reason":"stop","content_empty":false,"reasoning_len":0,"content_head":"```json\\n{\\n  \"title\": \"The Lighthouse at Cape Meridian\",\\n  \"commissioned_year\": 1847,\\n  \"first_lit_date\": \"3 March 1849\",\\n  \"designer\": \"Cornelius Vane"}
+{"id":"wire_off r2","elapsed":"21.6","completion_tokens":178,"finish_reason":"stop","content_empty":false,"reasoning_len":0,"content_head":"{\\n  \"title\": \"The Lighthouse at Cape Meridian\",\\n  \"commissioned_year\": 1847,\\n  \"first_lit_date\": \"3 March 1849\",\\n  \"designer\": \"Cornelius Vane\",\\n  \"la"}

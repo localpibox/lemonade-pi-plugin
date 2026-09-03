@@ -29,7 +29,9 @@
  *                      "min_p": 0.0, "presence_penalty": 0.0, "repetition_penalty": 1.0 },
  *     "coding":      { "temperature": 0.6 },
  *     "nonThinking": { "temperature": 0.7, "top_p": 0.8, "top_k": 20,
- *                      "min_p": 0.0, "presence_penalty": 1.5, "repetition_penalty": 1.0 }
+ *                      "min_p": 0.0, "presence_penalty": 1.5, "repetition_penalty": 1.0 },
+ *     "offParams":   { "enable_thinking": false },
+ *     "noThinkSuffix": "/no_think"
  *   }
  * }
  *
@@ -87,9 +89,21 @@ export interface ModelParamsEntry {
   /** Vendor sampling for the off level (P3). */
   nonThinking?: SamplingParams;
   /**
-   * Per-model off-switch token (P5). Default (absent): the Qwen3.x
-   * `/no_think` token. Empty string: no suffix for this model. Other
-   * model families may need different model-native tokens.
+   * Wire fields filled at the off level (P5, fill-missing semantics — an
+   * explicit payload value wins). Qwen entries ship
+   * `{ "enable_thinking": false }`: the running lemonade server honors it
+   * as a hard per-request off switch (validated 2026-09-03 across two
+   * Qwen models — 0 reasoning in 7/7 runs). Whenever a wire
+   * `enable_thinking` field is present in either direction (payload or
+   * offParams), the `/no_think` text suffix is skipped; it remains the
+   * fallback for models/servers without a wire off.
+   */
+  offParams?: Record<string, unknown>;
+  /**
+   * Per-model off-switch token (P5 fallback). Default (absent): the
+   * Qwen3.x `/no_think` token. Empty string: no suffix for this model.
+   * Other model families may need different model-native tokens.
+   * Used ONLY when no wire `enable_thinking` field decides the level.
    */
   noThinkSuffix?: string;
 }
@@ -178,6 +192,8 @@ export function resolveModelEntry(modelId: string): ModelParamsEntry | undefined
   if (coding) merged.coding = coding;
   const nonThinking = merge(base?.nonThinking, over?.nonThinking);
   if (nonThinking) merged.nonThinking = nonThinking;
+  const offParams = merge(base?.offParams, over?.offParams);
+  if (offParams) merged.offParams = offParams;
   const noThinkSuffix =
     over?.noThinkSuffix !== undefined ? over.noThinkSuffix : base?.noThinkSuffix;
   if (noThinkSuffix !== undefined) merged.noThinkSuffix = noThinkSuffix;
