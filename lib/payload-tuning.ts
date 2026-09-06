@@ -17,6 +17,12 @@
  *          applies (MIN_ANSWER_TOKENS). xhigh/max map to high (pi clamps
  *          them there too). Absent → pi's own budget stands.
  *
+ *   effortMap — per-model mapping of pi thinking levels to valid llama.cpp
+ *          reasoning_effort values. Some Qwen3 templates reject certain
+ *          names (e.g. Qwen3.8-27B rejects "minimal" and "high"). This map
+ *          converts them so the wire payload never sends a rejected effort.
+ *          Applied BEFORE writing reasoning_effort to the payload.
+ *
  *   thinking / coding / nonThinking (P3) — vendor-recommended sampling
  *          rows per mode. LPB_SAMPLING_PROFILE=coding selects the coding
  *          row (merged over thinking). Only fields MISSING from the
@@ -51,8 +57,17 @@
  * layer is model-generic, the catalog decides what is tuned.
  */
 
-import { resolveModelEntry, thinkingRow, type SamplingParams } from "./model-params.js";
+import { resolveModelEntry, thinkingRow, type SamplingParams, type ModelParamsEntry } from "./model-params.js";
 import { NO_THINK_SUFFIX } from "./payload-debug.js";
+
+/** Map a pi effort string to the model-specific server value (effortMap), or pass through. */
+function mapEffort(entry: ModelParamsEntry | undefined, effort: string | undefined): string | undefined {
+  if (!effort) return effort;
+  const map = entry?.effortMap;
+  if (!map) return effort;
+  const mapped = map[effort];
+  return mapped ?? effort; // unknown level → pass through unchanged
+}
 
 /** Mirror of pi's MIN_ANSWER_TOKENS: room left under the response ceiling. */
 export const MIN_ANSWER_TOKENS = 1024;
@@ -217,6 +232,16 @@ export function tuneModelPayload(
           out[field] = budget;
           changed = true;
         }
+      }
+    }
+    // ── effortMap: map pi effort to valid llama.cpp reasoning_effort value
+    //    Some Qwen3 templates reject certain names (Qwen3.8 rejects "minimal"
+    //    and "high"). Applied BEFORE writing to the wire.
+    if (effort && typeof out.reasoning_effort === "string") {
+      const mapped = mapEffort(entry, effort);
+      if (mapped !== effort) {
+        out.reasoning_effort = mapped;
+        changed = true;
       }
     }
     // ── P3: thinking sampling row (profile-selected, merged)

@@ -109,13 +109,13 @@ delete process.env.LPB_SAMPLING_PROFILE;
   check("catalog: seed thinking.temperature=1.0", plugin?.["Qwen3.8-27B-GGUF"]?.thinking?.temperature === 1.0);
   check("catalog: seed coding.temperature=0.6", plugin?.["Qwen3.8-27B-GGUF"]?.coding?.temperature === 0.6);
   check("catalog: seed nonThinking.presence_penalty=1.5", plugin?.["Qwen3.8-27B-GGUF"]?.nonThinking?.presence_penalty === 1.5);
-  check("catalog: unknown id → undefined", resolveModelEntry("Gemma-4-26B-A4B-it-GGUF") === undefined);
+  check("catalog: unknown id → undefined", resolveModelEntry("Test-Uncatalogued-9B") === undefined);
   check("catalog: empty id → undefined", resolveModelEntry("") === undefined);
 }
 
 // ── pass-through (uncatalogued / disabled) ──────────────────────────────────
 {
-  const p = wirePayload({ model: "Gemma-4-26B-A4B-it-GGUF", thinking_budget_tokens: 8192, reasoning_effort: "medium" });
+  const p = wirePayload({ model: "Test-Uncatalogued-9B", thinking_budget_tokens: 8192, reasoning_effort: "medium" });
   check("uncatalogued model: untouched (default pi behavior)", tuneModelPayload(p) === undefined);
 }
 {

@@ -62,11 +62,30 @@ export interface SamplingParams {
 
 export type BudgetLevel = "minimal" | "low" | "medium" | "high";
 
+export type EffortLevel = "low" | "medium" | "xhigh" | "high";
+
 export interface Budgets {
   minimal?: number;
   low?: number;
   medium?: number;
   high?: number;
+}
+
+/**
+ * Per-model mapping of pi thinking levels → llama.cpp reasoning_effort values.
+ *
+ * Some Qwen3 templates reject certain effort names (e.g. Qwen3.8-27B-GGUF
+ * rejects "minimal" and "high", accepting only low/medium/xhigh). This map
+ * converts incompatible pi levels to valid server-side values so the wire
+ * payload never sends a rejected effort string.
+ *
+ * Schema: { "pi_level": "server_effort", ... }
+ * - "minimal" → "low"  (template rejects minimal)
+ * - "high"   → "xhigh" (template rejects high; maps to max intensity)
+ * - "max"    → "xhigh" (same)
+ */
+export interface EffortMap {
+  [piLevel: string]: EffortLevel;
 }
 
 export interface ModelParamsEntry {
@@ -106,6 +125,20 @@ export interface ModelParamsEntry {
    * Used ONLY when no wire `enable_thinking` field decides the level.
    */
   noThinkSuffix?: string;
+  /**
+   * Per-model effort value mapping (Qwen3.8 template compatibility).
+   *
+   * Maps pi thinking levels to valid llama.cpp reasoning_effort values
+   * for this model's chat template. Some Qwen templates reject certain
+   * level names — this map converts them:
+   *
+   *   Qwen3.8-27B-GGUF: { "minimal": "low", "high": "xhigh" }
+   *     (template rejects "minimal" and "high", accepts low/medium/xhigh)
+   *
+   * Applied during P2 tuning, BEFORE writing reasoning_effort to the wire.
+   * If absent, pi's effort value is sent unchanged.
+   */
+  effortMap?: EffortMap;
 }
 
 export type ModelParamsFile = Record<string, ModelParamsEntry>;
@@ -199,6 +232,9 @@ export function resolveModelEntry(modelId: string): ModelParamsEntry | undefined
   if (noThinkSuffix !== undefined) merged.noThinkSuffix = noThinkSuffix;
   const maxTokens = over?.maxTokens ?? base?.maxTokens;
   if (typeof maxTokens === "number" && maxTokens > 0) merged.maxTokens = maxTokens;
+  // effortMap: user tier can add entries; absent → plugin tier maps it
+  const effortMap = merge(base?.effortMap, over?.effortMap);
+  if (effortMap) merged.effortMap = effortMap;
   return merged;
 }
 
