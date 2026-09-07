@@ -16,6 +16,8 @@ import { discoverViaBeacon, discoverViaHttp } from "./discovery.js";
 import { fmtHealth } from "./health.js";
 import { changeModelContext } from "./change-ctx.js";
 import { syncModelStore } from "./sync-store.js";
+import { probeThinking, probeVision, buildTunedEntry } from "./model-probe.js";
+import { readUserParams, USER_PARAMS_PATH } from "./model-params.js";
 
 // ─── Format helpers ─────────────────────────────────────────────────────────
 
@@ -85,7 +87,8 @@ export function registerAdminCommand(pi: ExtensionAPI, oauthBlock: unknown): voi
             "  delete <id>        — remove a model from disk\n" +
             "  refresh            — re-fetch model list and re-register provider\n" +
             "  discover           — UDP beacon + HTTP port scan\n" +
-            "  change-ctx <ctx_size> [model] — change context size for loaded model",
+            "  change-ctx <ctx_size> [model] — change context size for loaded model\n" +
+            "  tune <id>          — probe a model's capabilities (thinking/vision) and configure it in model-params.json",
           "info",
         );
         return;
@@ -367,6 +370,110 @@ export function registerAdminCommand(pi: ExtensionAPI, oauthBlock: unknown): voi
           await registerLemonadeProvider(pi, payload, oauthBlock);
           syncModelStore(payload.baseUrl, payload.apiKey);
           ctx.ui.notify("Provider re-registered with new ctx.", "info");
+          return;
+        }
+
+        // ── tune (probe capabilities + write catalog entry) ───────────────
+        case "tune": {
+          const id = rest[0];
+          if (!id) {
+            ctx.ui.notify(
+              "Usage: /lemonade tune <model_id>\n" +
+                "Probes the RUNNING server for thinking and vision support,\n" +
+                "then writes/updates the model's entry in " + USER_PARAMS_PATH + ".\n" +
+                "Slow when the model is not loaded (server loads it first).",
+              "warning",
+            );
+            return;
+          }
+
+          const models = await fetchModels(baseUrl, apiKey);
+          const model = models.find((m) => m.id === id || m.name === id);
+          if (!model) {
+            const known = models.map((m) => m.id).join(", ");
+            ctx.ui.notify(`Model "${id}" not found on server.\nKnown: ${known}`, "error");
+            return;
+          }
+
+          const labels = (model.labels ?? []).join(", ") || "(none)";
+          ctx.ui.notify(
+            `Tuning ${model.id}\n` +
+              `  server says: recipe=${model.recipe ?? "?"} labels=[${labels}]\n` +
+              `Probing the live server (may take minutes if the model must load)…`,
+            "info",
+          );
+
+          ctx.ui.notify(`  probing thinking (2 budgeted requests)…`, "info");
+          const thinking = await probeThinking(baseUrl, apiKey, model.id);
+          if (thinking.error) {
+            ctx.ui.notify(`  thinking probe failed: ${thinking.error}`, "warning");
+          } else {
+            ctx.ui.notify(
+              `  thinking: emits=${thinking.emitsReasoning} honorsBudget=${thinking.honorsBudget}` +
+                ` (reasoning chars: small=${thinking.reasoningCharsSmall}, large=${thinking.reasoningCharsLarge})`,
+              "info",
+            );
+          }
+
+          ctx.ui.notify(`  probing vision (image request)…`, "info");
+          const vision = await probeVision(baseUrl, apiKey, model.id);
+          ctx.ui.notify(`  vision: ${vision.vision ? "yes" : "no"} — ${vision.detail}`, "info");
+
+          // Tag/probe mismatch report (the whole point of probing)
+          const taggedReasoning = (model.labels ?? []).some((l) => l.toLowerCase() === "reasoning");
+          if (thinking && !thinking.error && taggedReasoning !== thinking.emitsReasoning) {
+            ctx.ui.notify(
+              `  ⚠ tag mismatch: server labels say reasoning=${taggedReasoning}, probe says ${thinking.emitsReasoning} — trusting the probe.`,
+              "warning",
+            );
+          }
+
+          const existing = readUserParams()?.[model.id];
+          const entry = buildTunedEntry(model, thinking, vision, existing);
+          const json = JSON.stringify(entry, null, 2);
+
+          ctx.ui.notify(
+            `Proposed catalog entry for ${model.id} (merged over existing user-tier entry):\n` +
+              "```json\n" + json + "\n```",
+            "info",
+          );
+
+          let answer = "yes";
+          if (ctx.ui.input) {
+            answer = (await ctx.ui.input(
+              `Write this entry to ${USER_PARAMS_PATH}? [yes/no/edit-later]`,
+              "yes",
+            ))?.trim().toLowerCase();
+          }
+          if (answer === "no" || answer === "edit-later") {
+            ctx.ui.notify("Not written. Copy the entry above into " + USER_PARAMS_PATH + " manually.", "info");
+            return;
+          }
+
+          try {
+            const file = process.env.LPB_MODEL_PARAMS_FILE?.trim() || USER_PARAMS_PATH;
+            let data: Record<string, unknown> = {};
+            try {
+              data = JSON.parse(await fs.readFile(file, "utf8"));
+            } catch {
+              /* missing or corrupt → start fresh (corrupt case warned below) */
+            }
+            data[model.id] = entry;
+            await fs.mkdir(path.dirname(file), { recursive: true });
+            await fs.writeFile(file, JSON.stringify(data, null, 2) + "\n");
+          } catch (e) {
+            ctx.ui.notify(`Failed to write ${USER_PARAMS_PATH}: ${String(e)}`, "error");
+            return;
+          }
+
+          // Re-sync so the new capabilities take effect without a restart.
+          await registerLemonadeProvider(pi, payload, oauthBlock);
+          syncModelStore(payload.baseUrl, payload.apiKey);
+          ctx.ui.notify(
+            `✓ ${model.id} configured. Provider re-registered — capabilities active now.\n` +
+              `(Budgets/sampling apply per-request; maxTokens/capabilities on this re-sync.)`,
+            "info",
+          );
           return;
         }
 

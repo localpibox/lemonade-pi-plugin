@@ -12,6 +12,9 @@
     "local-llm"
   ],
   "license": "MIT",
+  "scripts": {
+    "test": "jiti test/model-mapping.test.ts && jiti test/model-tuning.test.ts && jiti test/thinking-multi-level.test.ts && jiti test/model-probe.test.ts"
+  },
   "author": "Lemonade SDK",
   "homepage": "https://github.com/lpb-stack/lemonade-pi-plugin",
   "repository": {

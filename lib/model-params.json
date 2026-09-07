@@ -1,5 +1,7 @@
 {
   "Qwen3.6-27B-MTP-GGUF": {
+    "reasoning": true,
+    "vision": true,
     "maxTokens": 16384,
     "budgets": {
       "minimal": 2048,
@@ -8,28 +10,28 @@
       "high": 16384
     },
     "thinking": {
-      "temperature": 1.0,
+      "temperature": 1,
       "top_p": 0.95,
       "top_k": 20,
-      "min_p": 0.0,
-      "presence_penalty": 0.0,
-      "repetition_penalty": 1.0
+      "min_p": 0,
+      "presence_penalty": 0,
+      "repetition_penalty": 1
     },
     "coding": {
       "temperature": 0.6,
       "top_p": 0.95,
       "top_k": 20,
-      "min_p": 0.0,
-      "presence_penalty": 0.0,
-      "repetition_penalty": 1.0
+      "min_p": 0,
+      "presence_penalty": 0,
+      "repetition_penalty": 1
     },
     "nonThinking": {
       "temperature": 0.7,
       "top_p": 0.8,
       "top_k": 20,
-      "min_p": 0.0,
+      "min_p": 0,
       "presence_penalty": 1.5,
-      "repetition_penalty": 1.0
+      "repetition_penalty": 1
     },
     "offParams": {
       "enable_thinking": false
@@ -42,6 +44,8 @@
     }
   },
   "Qwen3.6-35B-A3B-MTP-GGUF": {
+    "reasoning": true,
+    "vision": true,
     "maxTokens": 16384,
     "budgets": {
       "minimal": 2048,
@@ -50,28 +54,28 @@
       "high": 16384
     },
     "thinking": {
-      "temperature": 1.0,
+      "temperature": 1,
       "top_p": 0.95,
       "top_k": 20,
-      "min_p": 0.0,
-      "presence_penalty": 0.0,
-      "repetition_penalty": 1.0
+      "min_p": 0,
+      "presence_penalty": 0,
+      "repetition_penalty": 1
     },
     "coding": {
       "temperature": 0.6,
       "top_p": 0.95,
       "top_k": 20,
-      "min_p": 0.0,
-      "presence_penalty": 0.0,
-      "repetition_penalty": 1.0
+      "min_p": 0,
+      "presence_penalty": 0,
+      "repetition_penalty": 1
     },
     "nonThinking": {
       "temperature": 0.7,
       "top_p": 0.8,
       "top_k": 20,
-      "min_p": 0.0,
+      "min_p": 0,
       "presence_penalty": 1.5,
-      "repetition_penalty": 1.0
+      "repetition_penalty": 1
     },
     "offParams": {
       "enable_thinking": false
@@ -84,6 +88,8 @@
     }
   },
   "Qwen3.8-27B-GGUF": {
+    "reasoning": true,
+    "vision": true,
     "maxTokens": 16384,
     "budgets": {
       "minimal": 2048,
@@ -92,28 +98,28 @@
       "high": 16384
     },
     "thinking": {
-      "temperature": 1.0,
+      "temperature": 1,
       "top_p": 0.95,
       "top_k": 20,
-      "min_p": 0.0,
-      "presence_penalty": 0.0,
-      "repetition_penalty": 1.0
+      "min_p": 0,
+      "presence_penalty": 0,
+      "repetition_penalty": 1
     },
     "coding": {
       "temperature": 0.6,
       "top_p": 0.95,
       "top_k": 20,
-      "min_p": 0.0,
-      "presence_penalty": 0.0,
-      "repetition_penalty": 1.0
+      "min_p": 0,
+      "presence_penalty": 0,
+      "repetition_penalty": 1
     },
     "nonThinking": {
       "temperature": 0.7,
       "top_p": 0.8,
       "top_k": 20,
-      "min_p": 0.0,
+      "min_p": 0,
       "presence_penalty": 1.5,
-      "repetition_penalty": 1.0
+      "repetition_penalty": 1
     },
     "offParams": {
       "enable_thinking": false
@@ -127,12 +133,16 @@
     }
   },
   "Qwen3-Coder-Next-GGUF": {
+    "reasoning": false,
+    "vision": false,
     "maxTokens": 16384,
     "offParams": {
       "enable_thinking": false
     }
   },
   "Gemma-4-26B-A4B-it-GGUF": {
+    "reasoning": true,
+    "vision": true,
     "maxTokens": 16384,
     "budgets": {
       "minimal": 2048,
@@ -141,34 +151,36 @@
       "high": 16384
     },
     "thinking": {
-      "temperature": 1.0,
+      "temperature": 1,
       "top_p": 0.95,
       "top_k": 64,
-      "min_p": 0.0,
-      "presence_penalty": 0.0,
-      "repetition_penalty": 1.0
+      "min_p": 0,
+      "presence_penalty": 0,
+      "repetition_penalty": 1
     },
     "coding": {
       "temperature": 0.6,
       "top_p": 0.95,
       "top_k": 64,
-      "min_p": 0.0,
-      "presence_penalty": 0.0,
-      "repetition_penalty": 1.0
+      "min_p": 0,
+      "presence_penalty": 0,
+      "repetition_penalty": 1
     },
     "nonThinking": {
       "temperature": 0.7,
       "top_p": 0.8,
       "top_k": 64,
-      "min_p": 0.0,
+      "min_p": 0,
       "presence_penalty": 1.5,
-      "repetition_penalty": 1.0
+      "repetition_penalty": 1
     },
     "offParams": {
       "enable_thinking": false
     }
   },
   "Gemma-4-26B-A4B-it-MTP-GGUF": {
+    "reasoning": true,
+    "vision": true,
     "maxTokens": 16384,
     "budgets": {
       "minimal": 2048,
@@ -177,34 +189,36 @@
       "high": 16384
     },
     "thinking": {
-      "temperature": 1.0,
+      "temperature": 1,
       "top_p": 0.95,
       "top_k": 64,
-      "min_p": 0.0,
-      "presence_penalty": 0.0,
-      "repetition_penalty": 1.0
+      "min_p": 0,
+      "presence_penalty": 0,
+      "repetition_penalty": 1
     },
     "coding": {
       "temperature": 0.6,
       "top_p": 0.95,
       "top_k": 64,
-      "min_p": 0.0,
-      "presence_penalty": 0.0,
-      "repetition_penalty": 1.0
+      "min_p": 0,
+      "presence_penalty": 0,
+      "repetition_penalty": 1
     },
     "nonThinking": {
       "temperature": 0.7,
       "top_p": 0.8,
       "top_k": 64,
-      "min_p": 0.0,
+      "min_p": 0,
       "presence_penalty": 1.5,
-      "repetition_penalty": 1.0
+      "repetition_penalty": 1
     },
     "offParams": {
       "enable_thinking": false
     }
   },
   "Qwen3.5-122B-A10B-MTP-GGUF": {
+    "reasoning": true,
+    "vision": true,
     "maxTokens": 16384,
     "budgets": {
       "minimal": 2048,
@@ -213,34 +227,36 @@
       "high": 16384
     },
     "thinking": {
-      "temperature": 1.0,
+      "temperature": 1,
       "top_p": 0.95,
       "top_k": 20,
-      "min_p": 0.0,
-      "presence_penalty": 0.0,
-      "repetition_penalty": 1.0
+      "min_p": 0,
+      "presence_penalty": 0,
+      "repetition_penalty": 1
     },
     "coding": {
       "temperature": 0.6,
       "top_p": 0.95,
       "top_k": 20,
-      "min_p": 0.0,
-      "presence_penalty": 0.0,
-      "repetition_penalty": 1.0
+      "min_p": 0,
+      "presence_penalty": 0,
+      "repetition_penalty": 1
     },
     "nonThinking": {
       "temperature": 0.7,
       "top_p": 0.8,
       "top_k": 20,
-      "min_p": 0.0,
+      "min_p": 0,
       "presence_penalty": 1.5,
-      "repetition_penalty": 1.0
+      "repetition_penalty": 1
     },
     "offParams": {
       "enable_thinking": false
     }
   },
   "Qwen3.5-4B-MTP-GGUF": {
+    "reasoning": true,
+    "vision": true,
     "maxTokens": 16384,
     "budgets": {
       "minimal": 2048,
@@ -249,31 +265,37 @@
       "high": 16384
     },
     "thinking": {
-      "temperature": 1.0,
+      "temperature": 1,
       "top_p": 0.95,
       "top_k": 20,
-      "min_p": 0.0,
-      "presence_penalty": 0.0,
-      "repetition_penalty": 1.0
+      "min_p": 0,
+      "presence_penalty": 0,
+      "repetition_penalty": 1
     },
     "coding": {
       "temperature": 0.6,
       "top_p": 0.95,
       "top_k": 20,
-      "min_p": 0.0,
-      "presence_penalty": 0.0,
-      "repetition_penalty": 1.0
+      "min_p": 0,
+      "presence_penalty": 0,
+      "repetition_penalty": 1
     },
     "nonThinking": {
       "temperature": 0.7,
       "top_p": 0.8,
       "top_k": 20,
-      "min_p": 0.0,
+      "min_p": 0,
       "presence_penalty": 1.5,
-      "repetition_penalty": 1.0
+      "repetition_penalty": 1
     },
     "offParams": {
       "enable_thinking": false
     }
+  },
+  "qwen3.5-9b-FLM-test": {
+    "reasoning": true,
+    "vision": false,
+    "disableReasoning": true,
+    "maxTokens": 16384
   }
 }

@@ -23,6 +23,10 @@
  *
  * {
  *   "<wire model id>": {
+ *     "reasoning":  true,
+ *     "vision":     true,
+ *     "disableReasoning": false,
+ *     "thinkingTokenBudgetField": "thinking_budget_tokens",
  *     "maxTokens":   16384,
  *     "budgets":     { "minimal": 2048, "low": 3072, "medium": 8192, "high": 16384 },
  *     "thinking":    { "temperature": 1.0, "top_p": 0.95, "top_k": 20,
@@ -89,6 +93,31 @@ export interface EffortMap {
 }
 
 export interface ModelParamsEntry {
+  /**
+   * Capability flags (applied at MODEL SYNC, like maxTokens — a change
+   * takes effect on the next model re-sync). These REPLACE the old
+   * name-regex/label heuristics: an uncatalogued model gets plain upstream
+   * mapping behavior, a catalogued model gets exactly what is written here.
+   * Absent → pi default (no reasoning, text-only input).
+   */
+  /** Model emits thinking/reasoning content → pi `reasoning: true`. */
+  reasoning?: boolean;
+  /** Vision-language model → adds "image" to the model's input modalities. */
+  vision?: boolean;
+  /**
+   * Backend chat template rejects the `developer` role that pi sends for
+   * reasoning models (e.g. FastFlowLM/FLM templates raise "Unexpected
+   * message role."). Forces `reasoning: false` even when `reasoning` is
+   * true, and marks the model `disable_reasoning`.
+   */
+  disableReasoning?: boolean;
+  /**
+   * Wire field name for pi's per-level thinking budget (default when
+   * absent on a reasoning model: "thinking_budget_tokens" — the only
+   * per-level knob the llama.cpp backend honors). Set to another value or
+   * omit `reasoning` for backends that need a different field.
+   */
+  thinkingTokenBudgetField?: string;
   /**
    * Response ceiling (max_completion_tokens) in tokens. Exact value — the
    * retired ctx-ratio formula (env + 0.06/0.125 constants + 16384 clamp)
@@ -232,6 +261,13 @@ export function resolveModelEntry(modelId: string): ModelParamsEntry | undefined
   if (noThinkSuffix !== undefined) merged.noThinkSuffix = noThinkSuffix;
   const maxTokens = over?.maxTokens ?? base?.maxTokens;
   if (typeof maxTokens === "number" && maxTokens > 0) merged.maxTokens = maxTokens;
+  // Capability flags: user tier wins field-by-field
+  for (const key of ["reasoning", "vision", "disableReasoning"] as const) {
+    const v = over?.[key] ?? base?.[key];
+    if (typeof v === "boolean") merged[key] = v;
+  }
+  const budgetField = over?.thinkingTokenBudgetField ?? base?.thinkingTokenBudgetField;
+  if (typeof budgetField === "string" && budgetField) merged.thinkingTokenBudgetField = budgetField;
   // effortMap: user tier can add entries; absent → plugin tier maps it
   const effortMap = merge(base?.effortMap, over?.effortMap);
   if (effortMap) merged.effortMap = effortMap;
