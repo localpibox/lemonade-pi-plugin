@@ -226,6 +226,61 @@ export function readUserParams(): ModelParamsFile | undefined {
 }
 
 /**
+ * Safe single-key upsert for the user tier — the ONLY sanctioned write
+ * path for the user params file. Shared by first-use seeding
+ * (seedModelEntry) and `/lemonade tune`. The user file is user-owned data
+ * (hand-tuned entries), so the contract is: this call may ADD or REPLACE
+ * one key and may CREATE a missing file — it may never destroy the file.
+ *
+ *   - file missing (ENOENT)       → created with the single entry;
+ *   - valid JSON object           → ONE key added/replaced, every other
+ *                                   entry copied through untouched;
+ *   - corrupt JSON / not an object → NEVER clobbered: the file is left
+ *                                   byte-for-byte untouched, a warning is
+ *                                   printed, "abort-corrupt" returned.
+ *
+ * Writes are atomic (tmp + rename): a crash mid-write can never leave a
+ * torn file at the target path — the file is always either the old
+ * complete content or the new complete content.
+ */
+export function upsertUserParamsEntry(
+  modelId: string,
+  entry: ModelParamsEntry,
+): "written" | "abort-corrupt" | "error" {
+  if (!modelId) return "error";
+  const file = userParamsPath();
+  let existing: ModelParamsFile | undefined;
+  try {
+    const raw = JSON.parse(fs.readFileSync(file, "utf8")) as ModelParamsFile;
+    if (typeof raw !== "object" || raw === null || Array.isArray(raw)) {
+      console.warn(`[lemonade] model params ${file}: corrupt — NOT clobbered by write`);
+      return "abort-corrupt";
+    }
+    existing = raw;
+  } catch (err) {
+    // ENOENT → create fresh; anything else → user-owned file, leave it
+    if ((err as NodeJS.ErrnoException)?.code !== "ENOENT") {
+      console.warn(
+        `[lemonade] model params ${file}: unreadable (${String(err)}) — NOT clobbered by write`,
+      );
+      return "abort-corrupt";
+    }
+  }
+  const merged: ModelParamsFile = { ...(existing ?? {}), [modelId]: entry };
+  try {
+    fs.mkdirSync(path.dirname(file), { recursive: true });
+    const tmp = `${file}.seed-tmp`;
+    fs.writeFileSync(tmp, JSON.stringify(merged, null, 4) + "\n");
+    fs.renameSync(tmp, file); // atomic — a crash never leaves a torn file
+    userCache.current = undefined; // same process re-reads on next access
+    return "written";
+  } catch (err) {
+    console.warn(`[lemonade] write of ${modelId} to ${file} failed: ${String(err)}`);
+    return "error";
+  }
+}
+
+/**
  * Targeted first-use seed for the user tier (replaces the 2026-09-08
  * bulk bootstrap, which preloaded the ENTIRE example catalog — only
  * models the user actually runs should be preconfigured).
@@ -235,7 +290,8 @@ export function readUserParams(): ModelParamsFile | undefined {
  *   - recognized in bundled examples/model-params.example.json → that
  *     SINGLE entry is merged into the user file and "seeded". Other
  *     entries are never modified; a missing file is created; a CORRUPT
- *     file is never clobbered ("unknown" + warning).
+ *     file is never clobbered ("unknown" + warning) — the write goes
+ *     through upsertUserParamsEntry, the single sanctioned write path.
  *   - not recognized anywhere → "unknown", NO file written. The model
  *     keeps sane defaults — recipe-keyword reasoning detection in model
  *     sync, plain pi pass-through for tuning. To tune it properly, probe
@@ -256,32 +312,14 @@ export function seedModelEntry(modelId: string): "seeded" | "present" | "unknown
   if (readPluginParams()?.[modelId] || readUserParams()?.[modelId]) return "present";
   const example = readExampleEntry(modelId);
   if (!example) return "unknown";
-  const file = userParamsPath();
-  let existing: ModelParamsFile | undefined;
-  try {
-    const raw = JSON.parse(fs.readFileSync(file, "utf8")) as ModelParamsFile;
-    if (typeof raw !== "object" || raw === null || Array.isArray(raw)) {
-      console.warn(`[lemonade] model params ${file}: corrupt — NOT clobbered by seed`);
-      return "unknown";
-    }
-    existing = raw;
-  } catch (err) {
-    // ENOENT → create fresh; anything else → user-owned file, leave it
-    if ((err as NodeJS.ErrnoException)?.code !== "ENOENT") return "unknown";
-  }
-  const merged: ModelParamsFile = { ...(existing ?? {}), [modelId]: example };
-  try {
-    fs.mkdirSync(path.dirname(file), { recursive: true });
-    const tmp = `${file}.seed-tmp`;
-    fs.writeFileSync(tmp, JSON.stringify(merged, null, 4) + "\n");
-    fs.renameSync(tmp, file); // atomic — a crash never leaves a torn file
-    userCache.current = undefined; // same process re-reads on next access
-    console.log(`[lemonade] seeded ${modelId} into user model params ${file} (from bundled examples)`);
+  const result = upsertUserParamsEntry(modelId, example);
+  if (result === "written") {
+    console.log(
+      `[lemonade] seeded ${modelId} into user model params ${userParamsPath()} (from bundled examples)`,
+    );
     return "seeded";
-  } catch (err) {
-    console.warn(`[lemonade] seed of ${modelId} failed: ${String(err)}`);
-    return "unknown";
   }
+  return "unknown"; // abort-corrupt / error — already warned by upsert
 }
 
 const exampleCache: FileCache = {};

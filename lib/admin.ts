@@ -18,7 +18,18 @@ import { fmtHealth } from "./health.js";
 import { changeModelContext } from "./change-ctx.js";
 import { probeThinking, probeVision, buildTunedEntry } from "./model-probe.js";
 import { fetchGgufParams } from "./gguf-params.js";
-import { readUserParams, userParamsPath, USER_PARAMS_PATH } from "./model-params.js";
+import {
+  readPluginParams,
+  readUserParams,
+  upsertUserParamsEntry,
+  userParamsPath,
+  type ModelParamsEntry,
+} from "./model-params.js";
+import {
+  editEntryLoop,
+  renderEntryOverview,
+  renderModelCatalog,
+} from "./tune-ui.js";
 
 // ─── Format helpers ─────────────────────────────────────────────────────────
 
@@ -89,7 +100,11 @@ export function registerAdminCommand(pi: ExtensionAPI, oauthBlock: unknown): voi
             "  refresh            — re-fetch model list and re-register provider\n" +
             "  discover           — UDP beacon + HTTP port scan\n" +
             "  change-ctx <ctx_size> [model] — change context size for loaded model\n" +
-            "  tune <id>          — probe a model (thinking/vision) and configure it in the per-model catalog",
+            "  tune               — browse the model catalog (catalogued vs on-server)\n" +
+            "  tune <id>          — probe a model and interactively edit its catalog entry\n" +
+            "  tune <id> --json   — probe, print the raw JSON entry only (no write)\n" +
+            "  tune <id> --yes    — probe and write without the editor\n" +
+            "                     (tune is slow when the model is not loaded)",
           "info",
         );
         return;
@@ -376,15 +391,23 @@ export function registerAdminCommand(pi: ExtensionAPI, oauthBlock: unknown): voi
 
         // ── tune (probe capabilities + GGUF metadata → catalog entry) ────
         case "tune": {
-          const id = rest[0];
+          const flags = rest.filter((a) => a.startsWith("--"));
+          const id = rest.find((a) => !a.startsWith("--"));
+
+          // No id → browse screen: catalogued (both tiers) vs on-server
           if (!id) {
+            const models = await fetchModels(baseUrl, apiKey);
             ctx.ui.notify(
-              "Usage: /lemonade tune <model_id>\n" +
-                "Probes the RUNNING server for thinking and vision support,\n" +
-                "fetches the checkpoint's embedded GGUF sampling metadata,\n" +
-                "then writes/updates the model's entry in " + USER_PARAMS_PATH + ".\n" +
-                "Slow when the model is not loaded (server loads it first).",
-              "warning",
+              renderModelCatalog(
+                models.map((m) => ({ id: m.id, loaded: m.loaded })),
+                { user: readUserParams(), plugin: readPluginParams() },
+              ),
+              "info",
+            );
+            ctx.ui.notify(
+              "Pick one: /lemonade tune <model_id> — probes the running server, then\n" +
+                "opens the entry editor. --json prints the raw entry; --yes skips the editor.",
+              "info",
             );
             return;
           }
@@ -455,40 +478,80 @@ export function registerAdminCommand(pi: ExtensionAPI, oauthBlock: unknown): voi
           }
 
           const existing = readUserParams()?.[model.id];
-          const entry = buildTunedEntry(model, thinking, vision, gguf, existing);
-          const json = JSON.stringify(entry, null, 2);
+          const entry = buildTunedEntry(model, thinking, vision, gguf, existing as Record<string, unknown> | undefined);
+          const tier = existing ? "user tier (existing, merged)" : "new user-tier entry";
 
-          ctx.ui.notify(
-            `Proposed catalog entry for ${model.id} (merged over existing user-tier entry; provenance in _meta):\n` +
-              "```json\n" + json + "\n```",
-            "info",
-          );
-
-          let answer = "yes";
-          if (ctx.ui.input) {
-            answer = (await ctx.ui.input(
-              `Write this entry to ${userParamsPath()}? [yes/no/edit-later]`,
-              "yes",
-            ))?.trim().toLowerCase();
-          }
-          if (answer === "no" || answer === "edit-later") {
-            ctx.ui.notify("Not written. Copy the entry above into " + userParamsPath() + " manually.", "info");
+          // --json: raw entry, no write (escape hatch / scripting)
+          if (flags.includes("--json")) {
+            ctx.ui.notify(
+              `Proposed catalog entry for ${model.id} (provenance in _meta):\n` +
+                "```json\n" + JSON.stringify(entry, null, 2) + "\n```",
+              "info",
+            );
             return;
           }
 
-          try {
-            const file = userParamsPath();
-            let data: Record<string, unknown> = {};
-            try {
-              data = JSON.parse(await fs.readFile(file, "utf8"));
-            } catch {
-              /* missing or corrupt → start fresh (corrupt case: existing entry already merged above) */
+          // Readable overview (replaces the old raw-JSON dump)
+          ctx.ui.notify(
+            renderEntryOverview(model.id, entry, {
+              tier,
+              loaded: model.loaded,
+              ctxWindow: model.max_context_window,
+              serverTags: model.labels,
+            }),
+            "info",
+          );
+
+          // Interactive editor (Phase B-lite): select a section → field →
+          // value; Enter keeps; overview re-renders after each edit.
+          if (!flags.includes("--yes") && ctx.ui.select && ctx.ui.input) {
+            const edited = await editEntryLoop(
+              {
+                notify: (m, l) => ctx.ui.notify(m, l),
+                select: (p, o) => ctx.ui.select!(p, o),
+                input: (p, ph) => ctx.ui.input!(p, ph),
+              },
+              model.id,
+              entry,
+            );
+            if (!edited) {
+              ctx.ui.notify("Tune cancelled — nothing written.", "info");
+              return;
             }
-            data[model.id] = entry;
-            await fs.mkdir(path.dirname(file), { recursive: true });
-            await fs.writeFile(file, JSON.stringify(data, null, 2) + "\n");
-          } catch (e) {
-            ctx.ui.notify(`Failed to write ${userParamsPath()}: ${String(e)}`, "error");
+            const next = await ctx.ui.select(
+              `Write the entry for ${model.id} to ${userParamsPath()}?`,
+              ["Write", "Show JSON only", "Cancel"],
+            );
+            if (!next || next.startsWith("Cancel")) {
+              ctx.ui.notify("Cancelled — nothing written.", "info");
+              return;
+            }
+            if (next.startsWith("Show JSON")) {
+              ctx.ui.notify(
+                "```json\n" + JSON.stringify(edited, null, 2) + "\n```\n" +
+                  "(nothing written — re-run /lemonade tune to edit)",
+                "info",
+              );
+              return;
+            }
+          } else if (flags.includes("--yes")) {
+            ctx.ui.notify(`Writing entry for ${model.id} (--yes — editor skipped).`, "info");
+          }
+
+          // Single sanctioned write path: atomic (tmp+rename), and a corrupt
+          // user file is NEVER clobbered — the write is aborted with a warning.
+          const writeResult = upsertUserParamsEntry(model.id, entry as ModelParamsEntry);
+          if (writeResult === "abort-corrupt") {
+            ctx.ui.notify(
+              `NOT WRITTEN — ${userParamsPath()} is corrupt and was left untouched.\n` +
+                `Fix or remove the file, then re-run: /lemonade tune ${model.id}\n` +
+                "(re-running re-probes and re-offers the entry; nothing is lost)",
+              "error",
+            );
+            return;
+          }
+          if (writeResult === "error") {
+            ctx.ui.notify(`Failed to write ${userParamsPath()}.`, "error");
             return;
           }
 
