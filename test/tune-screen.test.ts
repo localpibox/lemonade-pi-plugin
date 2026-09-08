@@ -100,20 +100,6 @@ const idx = (path: string) => TUNE_FIELDS.findIndex((f) => f.path === path);
   check("edit: fixed value commits", s.editing === false && getByPath(s.entry, "thinking.top_p") === 1);
 }
 
-{
-  const s = createTuneState({});
-  s.cursor = idx("noThinkSuffix");
-  applyKey(s, "enter");
-  for (const c of "/no_think") applyKey(s, c);
-  applyKey(s, "enter");
-  check("string: commit", getByPath(s.entry, "noThinkSuffix") === "/no_think");
-  s.cursor = idx("noThinkSuffix");
-  applyKey(s, "enter");
-  for (let i = 0, n = s.buffer.length; i < n; i++) applyKey(s, "backspace");
-  applyKey(s, "enter");
-  check("string: empty commit deletes field", getByPath(s.entry, "noThinkSuffix") === undefined);
-}
-
 // ─── Nudge (←/→ on numbers) ─────────────────────────────────────────────────
 
 {
@@ -194,13 +180,14 @@ const idx = (path: string) => TUNE_FIELDS.findIndex((f) => f.path === path);
 // ─── Renderer ───────────────────────────────────────────────────────────────
 
 {
-  const s = createTuneState({ reasoning: true, maxTokens: 16384, noThinkSuffix: "/no_think" });
+  const s = createTuneState({ reasoning: true, maxTokens: 16384, thinking: { temperature: 1, top_p: 0.95 } });
   const lines = renderTuneScreen(s, 100, META, PLAIN_STYLE);
   const text = lines.join("\n");
   check("render: header has id + tier + loaded + ctx", text.includes("Qwen3.8-27B-GGUF") && text.includes("[user tier]") && text.includes("● loaded") && text.includes("ctx 262144"), lines[0]);
   check("render: group headers present", text.includes("capabilities") && text.includes("budgets") && text.includes("thinking") && text.includes("nonThinking"), lines);
   check("render: cursor marker on field 0", lines.some((l) => l.startsWith("> ")), lines.slice(0, 3));
-  check("render: values shown at a glance", text.includes("true") && text.includes("16384") && text.includes('"\/no_think"'), text);
+  check("render: values shown at a glance", text.includes("true") && text.includes("16384") && text.includes("0.95"), text);
+  check("render: no literal undefined in labels", !text.includes(".undefined"), text);
   check("render: legend at bottom", lines[lines.length - 1].includes("↑↓/tab move") && lines[lines.length - 1].includes("s save"), lines[lines.length - 1]);
   check("render: status line above legend", lines[lines.length - 2].includes("s to save"), lines[lines.length - 2]);
 

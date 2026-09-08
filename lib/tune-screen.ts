@@ -5,8 +5,8 @@
  * model with every tunable value in a single ordered list:
  *
  *   - header: model id, tier, load state, ctx window
- *   - 21 fields in 6 groups (capabilities, ceiling, budgets, thinking
- *     sampling, nonThinking sampling, misc)
+ *   - 20 fields in 5 groups (capabilities, ceiling, budgets, thinking
+ *     sampling, nonThinking sampling)
  *   - footer: live status line + key legend
  *
  * Keys:
@@ -64,9 +64,8 @@ export const TUNE_FIELDS: TuneField[] = [
   { path: "budgets.low", label: "budgets.low", group: "budgets", kind: "number", step: 512, min: 512, base: "maxTokens" },
   { path: "budgets.medium", label: "budgets.medium", group: "budgets", kind: "number", step: 512, min: 512, base: "maxTokens" },
   { path: "budgets.high", label: "budgets.high", group: "budgets", kind: "number", step: 512, min: 512, base: "maxTokens" },
-  ...SAMPLING.map((s) => ({ path: `thinking.${s.path}`, label: `thinking.${s.path.split(".")[1]}`, group: "thinking", kind: "number" as const, step: s.step, min: s.min, max: s.max })),
-  ...SAMPLING.map((s) => ({ path: `nonThinking.${s.path}`, label: `nonThinking.${s.path.split(".")[1]}`, group: "nonThinking", kind: "number" as const, step: s.step, min: s.min, max: s.max })),
-  { path: "noThinkSuffix", label: "noThinkSuffix", group: "misc", kind: "string" },
+  ...SAMPLING.map((s) => ({ path: `thinking.${s.path}`, label: `thinking.${s.path}`, group: "thinking", kind: "number" as const, step: s.step, min: s.min, max: s.max })),
+  ...SAMPLING.map((s) => ({ path: `nonThinking.${s.path}`, label: `nonThinking.${s.path}`, group: "nonThinking", kind: "number" as const, step: s.step, min: s.min, max: s.max })),
 ];
 
 // ─── Path access ────────────────────────────────────────────────────────────
