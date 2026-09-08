@@ -28,7 +28,7 @@ import {
 import {
   editEntryLoop,
   renderEntryOverview,
-  renderModelCatalog,
+  tunePickerOptions,
 } from "./tune-ui.js";
 
 // ─── Format helpers ─────────────────────────────────────────────────────────
@@ -100,7 +100,7 @@ export function registerAdminCommand(pi: ExtensionAPI, oauthBlock: unknown): voi
             "  refresh            — re-fetch model list and re-register provider\n" +
             "  discover           — UDP beacon + HTTP port scan\n" +
             "  change-ctx <ctx_size> [model] — change context size for loaded model\n" +
-            "  tune               — browse the model catalog (catalogued vs on-server)\n" +
+            "  tune               — interactive picker over server models (catalog status)\n" +
             "  tune <id>          — probe a model and interactively edit its catalog entry\n" +
             "  tune <id> --json   — probe, print the raw JSON entry only (no write)\n" +
             "  tune <id> --yes    — probe and write without the editor\n" +
@@ -392,27 +392,29 @@ export function registerAdminCommand(pi: ExtensionAPI, oauthBlock: unknown): voi
         // ── tune (probe capabilities + GGUF metadata → catalog entry) ────
         case "tune": {
           const flags = rest.filter((a) => a.startsWith("--"));
-          const id = rest.find((a) => !a.startsWith("--"));
-
-          // No id → browse screen: catalogued (both tiers) vs on-server
-          if (!id) {
-            const models = await fetchModels(baseUrl, apiKey);
-            ctx.ui.notify(
-              renderModelCatalog(
-                models.map((m) => ({ id: m.id, loaded: m.loaded })),
-                { user: readUserParams(), plugin: readPluginParams() },
-              ),
-              "info",
-            );
-            ctx.ui.notify(
-              "Pick one: /lemonade tune <model_id> — probes the running server, then\n" +
-                "opens the entry editor. --json prints the raw entry; --yes skips the editor.",
-              "info",
-            );
-            return;
-          }
+          let id = rest.find((a) => !a.startsWith("--"));
 
           const models = await fetchModels(baseUrl, apiKey);
+
+          // No id → interactive picker: one compact row per model with
+          // catalog tier (user / plugin / not in model-params.json).
+          if (!id) {
+            const opts = tunePickerOptions(
+              models.map((m) => ({ id: m.id, loaded: m.loaded })),
+              { user: readUserParams(), plugin: readPluginParams() },
+            );
+            const pick = await ctx.ui.select(
+              "Tune which model? (Esc cancels)",
+              opts.map((o) => o.label).concat("cancel"),
+            );
+            const chosen = pick ? opts.find((o) => o.label === pick) : undefined;
+            if (!chosen) {
+              ctx.ui.notify("tune cancelled — nothing probed or written.", "info");
+              return;
+            }
+            id = chosen.id;
+          }
+
           const model = models.find((m) => m.id === id || m.name === id);
           if (!model) {
             const known = models.map((m) => m.id).join(", ");

@@ -12,6 +12,7 @@ import { upsertUserParamsEntry, seedModelEntry, readUserParams } from "../lib/mo
 import {
   renderEntryOverview,
   renderModelCatalog,
+  tunePickerOptions,
   validateBudgets,
   validateSamplingValue,
   parseBoolAnswer,
@@ -167,6 +168,24 @@ check("catalog: plugin-tier model listed", cat.includes("model-b") && cat.includ
 check("catalog: uncatalogued model flagged", cat.includes("model-d") && cat.includes("not catalogued — /lemonade tune <id>"), cat);
 check("catalog: orphan (in catalog, not on server)", cat.includes("IN CATALOG, NOT ON SERVER") && cat.includes("model-c"), cat);
 check("catalog: summary shows capabilities", cat.includes("reasoning · maxTokens 16384") && cat.includes("vision"), cat);
+
+// ─── tunePickerOptions (no-arg interactive picker) ──────────────────────────
+
+const opts = tunePickerOptions(
+  [
+    { id: "model-a", loaded: true },
+    { id: "model-b", loaded: false },
+    { id: "model-d" },
+  ],
+  {
+    user: { "model-a": { reasoning: true, maxTokens: 16384 } },
+    plugin: { "model-b": { vision: true } },
+  },
+);
+check("picker: user tier row with load dot + caps", opts[0].id === "model-a" && opts[0].label === "●  model-a  [user]  reasoning · maxTokens 16384", opts[0]);
+check("picker: plugin tier row", opts[1].id === "model-b" && opts[1].label === "○  model-b  [plugin]  vision", opts[1]);
+check("picker: uncatalogued row flagged", opts[2].id === "model-d" && opts[2].label === "○  model-d  [— not in model-params]", opts[2]);
+check("picker: id round-trips (label lookup safe)", opts.find((o) => o.label === opts[0].label)?.id === "model-a", opts);
 
 // ─── editEntryLoop (scripted fake UI) ───────────────────────────────────────
 

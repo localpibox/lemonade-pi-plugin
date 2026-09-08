@@ -211,6 +211,33 @@ export function renderModelCatalog(
   return lines.join("\n");
 }
 
+// ─── Interactive picker (no-arg `/lemonade tune`) ───────────────────────────
+
+export interface TunePickerOption {
+  label: string;
+  id: string;
+}
+
+/**
+ * Options for the no-arg `/lemonade tune` interactive picker. One compact
+ * row per server model: load dot, id, catalog tier, capability summary.
+ * `[— not in model-params]` marks models with no user- or plugin-tier entry.
+ */
+export function tunePickerOptions(
+  serverModels: { id: string; loaded?: boolean }[],
+  catalog: CatalogView,
+): TunePickerOption[] {
+  return serverModels.map((m) => {
+    const user = catalog.user?.[m.id];
+    const plugin = catalog.plugin?.[m.id];
+    const tier = user ? "[user]" : plugin ? "[plugin]" : "[— not in model-params]";
+    const summary = user || plugin ? entrySummary(user ?? plugin ?? {}) : "";
+    const parts = [m.loaded ? "●" : "○", m.id, tier];
+    if (summary) parts.push(summary);
+    return { label: parts.join("  "), id: m.id };
+  });
+}
+
 // ─── Validation (pure) ──────────────────────────────────────────────────────
 
 /** Parse a yes/no answer; "" (Enter) keeps the current value. */
