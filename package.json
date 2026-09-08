@@ -12,6 +12,9 @@
     "local-llm"
   ],
   "license": "MIT",
+  "scripts": {
+    "test": "jiti test/model-mapping.test.ts"
+  },
   "author": "Lemonade SDK",
   "homepage": "https://github.com/lemonade-sdk/lemonade-pi-plugin",
   "repository": {
@@ -24,6 +27,9 @@
   "peerDependencies": {
     "@earendil-works/pi-coding-agent": "*",
     "@earendil-works/pi-ai": "*"
+  },
+  "devDependencies": {
+    "jiti": "^2.7.0"
   },
   "pi": {
     "extensions": ["extensions/index.ts"]
