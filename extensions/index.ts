@@ -23,15 +23,38 @@ import { registerAdminCommand } from "../lib/admin.js";
 import { oauthLogin } from "../lib/oauth.js";
 import { registerLemonadeProvider } from "../lib/provider.js";
 import { syncModelStore } from "../lib/sync-store.js";
-import { bootstrapUserParams } from "../lib/model-params.js";
+import { seedModelEntry } from "../lib/model-params.js";
 import { tuneModelPayload, envFlag } from "../lib/payload-tuning.js";
 import { writePayloadDebugLog } from "../lib/payload-debug.js";
 
 export default async function lemonadeProvider(pi: ExtensionAPI): Promise<void> {
-  // Cold start: a missing user catalog is seeded from the bundled examples
-  // BEFORE model sync, so fresh installs get reasoning flags + tuning
-  // without manual setup. Never touches an existing file.
-  bootstrapUserParams();
+  // Model-store sync args (kept current on every sync path) — the
+  // debounced re-sync after a first-use seed uses these.
+  let syncArgs: { baseUrl: string; apiKey: string } | undefined;
+  let resyncTimer: ReturnType<typeof setTimeout> | undefined;
+  let resyncInFlight = false;
+  const doSync = (baseUrl: string, apiKey: string): void => {
+    syncArgs = { baseUrl, apiKey };
+    syncModelStore(baseUrl, apiKey);
+  };
+  // Debounced + serialized models-store re-sync. Needed after a first-use
+  // seed: the store carries the per-model reasoning flag that decides
+  // which thinking levels pi offers — a mid-session seed must refresh it,
+  // or the new model sits "off only" until the next pi start (the exact
+  // 2026-09-08 symptom). Worst case pi's per-process store cache is
+  // stale until restart — never wrong, just delayed.
+  const scheduleStoreResync = (): void => {
+    if (resyncTimer || resyncInFlight || !syncArgs) return;
+    resyncTimer = setTimeout(() => {
+      resyncTimer = undefined;
+      if (resyncInFlight || !syncArgs) return;
+      resyncInFlight = true;
+      syncModelStore(syncArgs.baseUrl, syncArgs.apiKey).finally(() => {
+        resyncInFlight = false;
+      });
+    }, 1000);
+    resyncTimer.unref?.(); // never hold the process open for a re-sync
+  };
 
   const oauthBlock = {
     name: PROVIDER_LABEL,
@@ -46,7 +69,7 @@ export default async function lemonadeProvider(pi: ExtensionAPI): Promise<void> 
           // network blip — keep creds, retry on next refresh
         }
         // Keep models-store.json in sync during token refresh too.
-        syncModelStore(payload.baseUrl, payload.apiKey);
+        doSync(payload.baseUrl, payload.apiKey);
       }
       return encodeCreds(payload);
     },
@@ -77,7 +100,7 @@ export default async function lemonadeProvider(pi: ExtensionAPI): Promise<void> 
     }
     // Keep models-store.json in sync so subprocesses and subagents can
     // resolve lemonade models with correct context sizes.
-    syncModelStore(stored.baseUrl, stored.apiKey);
+    doSync(stored.baseUrl, stored.apiKey);
   }
 
   registerAdminCommand(pi, oauthBlock);
@@ -94,6 +117,19 @@ export default async function lemonadeProvider(pi: ExtensionAPI): Promise<void> 
   pi.on("before_provider_request", (event: { payload?: Record<string, unknown> }, ctx?: { thinkingLevel?: string }) => {
     const payload = event?.payload;
     if (!payload || typeof payload !== "object") return undefined;
+    // First-use seed: a RECOGNIZED model (bundled examples) not yet in the
+    // user/plugin catalog is added when first actually requested — the
+    // wire payload is the only reliable "current model" signal (covers
+    // cold start, resumed sessions, mid-stack switches alike). Idempotent
+    // once present; a failure never breaks the request. A fresh seed also
+    // refreshes models-store.json (reasoning flag → thinking levels).
+    if (typeof payload.model === "string") {
+      try {
+        if (seedModelEntry(payload.model) === "seeded") scheduleStoreResync();
+      } catch {
+        // seeding is best-effort
+      }
+    }
     let tuned: Record<string, unknown> | undefined;
     try {
       tuned = tuneModelPayload(payload, { thinkingLevel: ctx?.thinkingLevel });

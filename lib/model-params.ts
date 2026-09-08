@@ -9,15 +9,18 @@
  *   1. User tier — ~/.pi/agent/model-params.json
  *      (override the path with LEMONADE_PARAMS_FILE). OPTIONAL: a missing
  *      file simply means no user entries. Lives on the host volume like
- *      settings.json; gitignored in the config repo.
+ *      settings.json; gitignored in the config repo. Recognized models
+ *      (bundled examples) are seeded here ON DEMAND, one model at a time,
+ *      when first actually used (seedModelEntry) — never bulk-preloaded.
  *   2. Plugin tier — lib/model-params.json (next to this file). Shipped
  *      with the plugin, versioned with the stack; seeds the models the
  *      stack actually runs.
  *
  * FILE MEMBERSHIP IS THE TUNING GATE: a wire model id that is in neither
  * tier passes through with DEFAULT PI BEHAVIOR — no ceiling override, no
- * budget rewrite, no sampling injection, no /no_think suffix. To tune a
- * model, add its wire id to one of the tiers.
+ * budget rewrite, no sampling injection, no off-level wire fields. To
+ * tune a model, add its wire id to one of the tiers (or run
+ * `/lemonade tune <id>` to probe the running server for a sourced entry).
  *
  * Schema (every section and field optional; partial rows allowed):
  *
@@ -223,48 +226,79 @@ export function readUserParams(): ModelParamsFile | undefined {
 }
 
 /**
- * Cold-start seed for the user tier. When the user params file is MISSING
- * and the plugin tier ships no entries, copy the bundled
- * examples/model-params.example.json into place so model sync (reasoning
- * flags, ceilings) and payload tuning work out of the box on a fresh
- * install — the 2026-09-08 incident (empty catalog → reasoning:false →
- * "off" only → unbounded server-side thinking) must not recur.
+ * Targeted first-use seed for the user tier (replaces the 2026-09-08
+ * bulk bootstrap, which preloaded the ENTIRE example catalog — only
+ * models the user actually runs should be preconfigured).
  *
- * Semantics:
- *   - A missing file is re-seeded on every extension load (self-healing
- *     after a delete). Disable tuning via LEMONADE_PAYLOAD_TUNING=off, not
- *     by deleting the file.
- *   - An EXISTING file is never touched — not even an empty `{}` or a
- *     corrupt one (the user owns it; corrupt files are ignored + warned).
- *   - No-op when the plugin tier already carries entries (it would seed
- *     the models itself).
+ * `seedModelEntry(modelId)` — for ONE wire model id:
+ *   - already in the user OR plugin tier → "present", nothing written.
+ *   - recognized in bundled examples/model-params.example.json → that
+ *     SINGLE entry is merged into the user file and "seeded". Other
+ *     entries are never modified; a missing file is created; a CORRUPT
+ *     file is never clobbered ("unknown" + warning).
+ *   - not recognized anywhere → "unknown", NO file written. The model
+ *     keeps sane defaults — recipe-keyword reasoning detection in model
+ *     sync, plain pi pass-through for tuning. To tune it properly, probe
+ *     the running server with `/lemonade tune <id>` (writes a sourced
+ *     entry) or add it to the user file manually.
  *
- * @returns "seeded" when the file was created, "skipped" otherwise.
+ * Guarded by the LEMONADE_PAYLOAD_TUNING master switch (tuning off → no
+ * config writes). Writes are atomic (tmp + rename) and best-effort: a
+ * failure never breaks a request.
+ *
+ * @returns "seeded" when the entry was added, "present" when already
+ *          catalogued, "unknown" when nothing was done.
  */
-export function bootstrapUserParams(): "seeded" | "skipped" {
+export function seedModelEntry(modelId: string): "seeded" | "present" | "unknown" {
+  if (!modelId) return "unknown";
+  const v = (process.env.LEMONADE_PAYLOAD_TUNING ?? "").trim().toLowerCase();
+  if (v === "0" || v === "off" || v === "false" || v === "no") return "unknown";
+  if (readPluginParams()?.[modelId] || readUserParams()?.[modelId]) return "present";
+  const example = readExampleEntry(modelId);
+  if (!example) return "unknown";
   const file = userParamsPath();
+  let existing: ModelParamsFile | undefined;
   try {
-    fs.statSync(file);
-    return "skipped"; // present in whatever state — user owns it
-  } catch (err) {
-    if ((err as NodeJS.ErrnoException)?.code !== "ENOENT") return "skipped";
-  }
-  const plugin = readPluginParams();
-  if (plugin && Object.keys(plugin).length > 0) return "skipped";
-  const examplePath = path.join(__dirname, "..", "examples", "model-params.example.json");
-  try {
-    const raw = JSON.parse(fs.readFileSync(examplePath, "utf8")) as ModelParamsFile;
-    if (typeof raw !== "object" || raw === null || Array.isArray(raw) || Object.keys(raw).length === 0) {
-      return "skipped";
+    const raw = JSON.parse(fs.readFileSync(file, "utf8")) as ModelParamsFile;
+    if (typeof raw !== "object" || raw === null || Array.isArray(raw)) {
+      console.warn(`[lemonade] model params ${file}: corrupt — NOT clobbered by seed`);
+      return "unknown";
     }
+    existing = raw;
+  } catch (err) {
+    // ENOENT → create fresh; anything else → user-owned file, leave it
+    if ((err as NodeJS.ErrnoException)?.code !== "ENOENT") return "unknown";
+  }
+  const merged: ModelParamsFile = { ...(existing ?? {}), [modelId]: example };
+  try {
     fs.mkdirSync(path.dirname(file), { recursive: true });
-    fs.writeFileSync(file, JSON.stringify(raw, null, 4) + "\n");
-    console.log(
-      `[lemonade] seeded user model params ${file} from bundled examples (${Object.keys(raw).length} models)`,
-    );
+    const tmp = `${file}.seed-tmp`;
+    fs.writeFileSync(tmp, JSON.stringify(merged, null, 4) + "\n");
+    fs.renameSync(tmp, file); // atomic — a crash never leaves a torn file
+    userCache.current = undefined; // same process re-reads on next access
+    console.log(`[lemonade] seeded ${modelId} into user model params ${file} (from bundled examples)`);
     return "seeded";
+  } catch (err) {
+    console.warn(`[lemonade] seed of ${modelId} failed: ${String(err)}`);
+    return "unknown";
+  }
+}
+
+const exampleCache: FileCache = {};
+
+/** Read one entry from the bundled examples file (curated reference tier). */
+function readExampleEntry(modelId: string): ModelParamsEntry | undefined {
+  const file = path.join(__dirname, "..", "examples", "model-params.example.json");
+  try {
+    const st = fs.statSync(file);
+    let data = exampleCache.current?.data;
+    if (!data || exampleCache.current.mtimeMs !== st.mtimeMs) {
+      data = JSON.parse(fs.readFileSync(file, "utf8")) as ModelParamsFile;
+      exampleCache.current = { mtimeMs: st.mtimeMs, data };
+    }
+    return data?.[modelId];
   } catch {
-    return "skipped"; // no bundled example available — nothing to seed
+    return undefined; // no bundled example available
   }
 }
 

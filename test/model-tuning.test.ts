@@ -1,6 +1,6 @@
 /**
  * Model-driven payload tuning + per-model catalog + generic debug log +
- * cold-start bootstrap.
+ * targeted first-use seeding.
  *
  * Wire payloads are modeled on captured traffic (2026-09-01,
  * Qwen3.8-27B-GGUF, pi 0.84.4, llama.cpp server b10818):
@@ -26,9 +26,9 @@ import {
   tuneModelPayload,
 } from "../lib/payload-tuning.js";
 import {
-  bootstrapUserParams,
   resolveModelEntry,
   samplingProfile,
+  seedModelEntry,
   thinkingRow,
 } from "../lib/model-params.js";
 import {
@@ -319,25 +319,52 @@ for (const level of ["minimal", "low", "medium", "high"] as const) {
   rmSync(userFile);
 }
 
-// ── cold-start bootstrap (seed user tier from bundled examples) ────────────
+// ── targeted first-use seeding (seedModelEntry — no bulk preload) ────────
 {
-  // Missing user file → seeded from examples/model-params.example.json
-  check("bootstrap: missing file → seeded", bootstrapUserParams() === "seeded");
-  check("bootstrap: file exists after seed", existsSync(userFile));
-  const seeded = JSON.parse(readFileSync(userFile, "utf8")) as Record<string, unknown>;
-  check("bootstrap: curated entries present", Object.keys(seeded).length >= 8, Object.keys(seeded).length);
-  check("bootstrap: seed entry resolves", resolveModelEntry("Qwen3.6-35B-A3B-MTP-GGUF") !== undefined);
-  check("bootstrap: seeded Qwen3.8 reasoning=true",
-    resolveModelEntry("Qwen3.8-27B-GGUF")?.reasoning === true);
-  check("bootstrap: seeded Qwen3.8 has offParams",
-    resolveModelEntry("Qwen3.8-27B-GGUF")?.offParams?.enable_thinking === false);
+  // 1. Missing file + recognized model → exactly that model is seeded
+  rmSync(userFile, { force: true });
+  check("seed: missing file + recognized model → seeded",
+    seedModelEntry("Qwen3.6-35B-A3B-MTP-GGUF") === "seeded");
+  const seededFile = JSON.parse(readFileSync(userFile, "utf8")) as Record<string, unknown>;
+  check("seed: ONLY the targeted model written (no bulk preload)",
+    Object.keys(seededFile).length === 1 && seededFile["Qwen3.6-35B-A3B-MTP-GGUF"] !== undefined,
+    Object.keys(seededFile));
+  check("seed: other example models NOT preloaded", seededFile["Qwen3.8-27B-GGUF"] === undefined);
+  check("seed: seeded entry resolves (offParams present)",
+    resolveModelEntry("Qwen3.6-35B-A3B-MTP-GGUF")?.offParams?.enable_thinking === false);
+  check("seed: already catalogued → present (no rewrite)",
+    seedModelEntry("Qwen3.6-35B-A3B-MTP-GGUF") === "present");
 
-  // An existing file is NEVER touched (even if the seed would differ)
-  writeUserFile({ "My-Model-1B": { "maxTokens": 4096 } });
-  const before = readFileSync(userFile, "utf8");
-  check("bootstrap: existing file → skipped", bootstrapUserParams() === "skipped");
-  check("bootstrap: existing file content untouched", readFileSync(userFile, "utf8") === before);
-  check("bootstrap: user entry still resolves", resolveModelEntry("My-Model-1B")?.maxTokens === 4096);
+  // 2. Merge into an existing file — other entries untouched
+  const withMine = {
+    "My-Model-1B": { maxTokens: 4096 },
+    "Qwen3.6-35B-A3B-MTP-GGUF": seededFile["Qwen3.6-35B-A3B-MTP-GGUF"],
+  };
+  writeUserFile(withMine);
+  const res = seedModelEntry("Qwen3.8-27B-GGUF");
+  const after = JSON.parse(readFileSync(userFile, "utf8")) as Record<string, unknown>;
+  check("seed: merges into existing file", res === "seeded" && after["Qwen3.8-27B-GGUF"] !== undefined, res);
+  check("seed: other entries untouched",
+    JSON.stringify(after["My-Model-1B"]) === JSON.stringify(withMine["My-Model-1B"]));
+  check("seed: pre-existing model entry untouched",
+    JSON.stringify(after["Qwen3.6-35B-A3B-MTP-GGUF"]) === JSON.stringify(withMine["Qwen3.6-35B-A3B-MTP-GGUF"]));
+
+  // 3. Unknown model → nothing written, no file created (sane pass-through)
+  rmSync(userFile);
+  check("seed: unknown model → unknown", seedModelEntry("Totally-Unknown-9B") === "unknown");
+  check("seed: unknown model does NOT create the file", !existsSync(userFile));
+
+  // 4. Corrupt file → never clobbered
+  writeUserFile("garbage-not-json");
+  check("seed: corrupt file → skipped", seedModelEntry("Qwen3.8-27B-GGUF") === "unknown");
+  check("seed: corrupt file content preserved", readFileSync(userFile, "utf8") === "garbage-not-json");
+  rmSync(userFile);
+
+  // 5. Tuning disabled → no config writes either
+  process.env.LEMONADE_PAYLOAD_TUNING = "off";
+  check("seed: tuning off → no write",
+    seedModelEntry("Qwen3.8-27B-GGUF") === "unknown" && !existsSync(userFile));
+  delete process.env.LEMONADE_PAYLOAD_TUNING;
 }
 
 // ── generic debug log ───────────────────────────────────────────────────────
