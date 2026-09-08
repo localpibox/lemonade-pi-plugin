@@ -7,7 +7,7 @@
  * Two tiers, merged per model id (user wins per section/field):
  *
  *   1. User tier — ~/.pi/agent/model-params.json
- *      (override the path with LPB_MODEL_PARAMS_FILE). OPTIONAL: a missing
+ *      (override the path with LEMONADE_PARAMS_FILE). OPTIONAL: a missing
  *      file simply means no user entries. Lives on the host volume like
  *      settings.json; gitignored in the config repo.
  *   2. Plugin tier — lib/model-params.json (next to this file). Shipped
@@ -34,8 +34,7 @@
  *     "coding":      { "temperature": 0.6 },
  *     "nonThinking": { "temperature": 0.7, "top_p": 0.8, "top_k": 20,
  *                      "min_p": 0.0, "presence_penalty": 1.5, "repetition_penalty": 1.0 },
- *     "offParams":   { "enable_thinking": false },
- *     "noThinkSuffix": "/no_think"
+ *     "offParams":   { "enable_thinking": false }
  *   }
  * }
  *
@@ -148,13 +147,6 @@ export interface ModelParamsEntry {
    */
   offParams?: Record<string, unknown>;
   /**
-   * Per-model off-switch token (P5 fallback). Default (absent): the
-   * Qwen3.x `/no_think` token. Empty string: no suffix for this model.
-   * Other model families may need different model-native tokens.
-   * Used ONLY when no wire `enable_thinking` field decides the level.
-   */
-  noThinkSuffix?: string;
-  /**
    * Per-model effort value mapping (Qwen3.8 template compatibility).
    *
    * Maps pi thinking levels to valid llama.cpp reasoning_effort values
@@ -180,9 +172,9 @@ const PLUGIN_PARAMS_PATH = path.join(__dirname, "model-params.json");
 
 export type SamplingProfile = "general" | "coding";
 
-/** LPB_SAMPLING_PROFILE: "coding" selects the coding row, anything else → general. */
+/** LEMONADE_SAMPLING_PROFILE: "coding" selects the coding row, anything else → general. */
 export function samplingProfile(): SamplingProfile {
-  return (process.env.LPB_SAMPLING_PROFILE ?? "").trim().toLowerCase() === "coding"
+  return (process.env.LEMONADE_SAMPLING_PROFILE ?? "").trim().toLowerCase() === "coding"
     ? "coding"
     : "general";
 }
@@ -218,8 +210,8 @@ function readTier(file: string, cache: FileCache): ModelParamsFile | undefined {
 const pluginCache: FileCache = {};
 const userCache: FileCache = {};
 
-function userParamsPath(): string {
-  return process.env.LPB_MODEL_PARAMS_FILE?.trim() || USER_PARAMS_PATH;
+export function userParamsPath(): string {
+  return process.env.LEMONADE_PARAMS_FILE?.trim() || USER_PARAMS_PATH;
 }
 
 export function readPluginParams(): ModelParamsFile | undefined {
@@ -228,6 +220,52 @@ export function readPluginParams(): ModelParamsFile | undefined {
 
 export function readUserParams(): ModelParamsFile | undefined {
   return readTier(userParamsPath(), userCache);
+}
+
+/**
+ * Cold-start seed for the user tier. When the user params file is MISSING
+ * and the plugin tier ships no entries, copy the bundled
+ * examples/model-params.example.json into place so model sync (reasoning
+ * flags, ceilings) and payload tuning work out of the box on a fresh
+ * install — the 2026-09-08 incident (empty catalog → reasoning:false →
+ * "off" only → unbounded server-side thinking) must not recur.
+ *
+ * Semantics:
+ *   - A missing file is re-seeded on every extension load (self-healing
+ *     after a delete). Disable tuning via LEMONADE_PAYLOAD_TUNING=off, not
+ *     by deleting the file.
+ *   - An EXISTING file is never touched — not even an empty `{}` or a
+ *     corrupt one (the user owns it; corrupt files are ignored + warned).
+ *   - No-op when the plugin tier already carries entries (it would seed
+ *     the models itself).
+ *
+ * @returns "seeded" when the file was created, "skipped" otherwise.
+ */
+export function bootstrapUserParams(): "seeded" | "skipped" {
+  const file = userParamsPath();
+  try {
+    fs.statSync(file);
+    return "skipped"; // present in whatever state — user owns it
+  } catch (err) {
+    if ((err as NodeJS.ErrnoException)?.code !== "ENOENT") return "skipped";
+  }
+  const plugin = readPluginParams();
+  if (plugin && Object.keys(plugin).length > 0) return "skipped";
+  const examplePath = path.join(__dirname, "..", "examples", "model-params.example.json");
+  try {
+    const raw = JSON.parse(fs.readFileSync(examplePath, "utf8")) as ModelParamsFile;
+    if (typeof raw !== "object" || raw === null || Array.isArray(raw) || Object.keys(raw).length === 0) {
+      return "skipped";
+    }
+    fs.mkdirSync(path.dirname(file), { recursive: true });
+    fs.writeFileSync(file, JSON.stringify(raw, null, 4) + "\n");
+    console.log(
+      `[lemonade] seeded user model params ${file} from bundled examples (${Object.keys(raw).length} models)`,
+    );
+    return "seeded";
+  } catch {
+    return "skipped"; // no bundled example available — nothing to seed
+  }
 }
 
 /**
@@ -256,9 +294,6 @@ export function resolveModelEntry(modelId: string): ModelParamsEntry | undefined
   if (nonThinking) merged.nonThinking = nonThinking;
   const offParams = merge(base?.offParams, over?.offParams);
   if (offParams) merged.offParams = offParams;
-  const noThinkSuffix =
-    over?.noThinkSuffix !== undefined ? over.noThinkSuffix : base?.noThinkSuffix;
-  if (noThinkSuffix !== undefined) merged.noThinkSuffix = noThinkSuffix;
   const maxTokens = over?.maxTokens ?? base?.maxTokens;
   if (typeof maxTokens === "number" && maxTokens > 0) merged.maxTokens = maxTokens;
   // Capability flags: user tier wins field-by-field

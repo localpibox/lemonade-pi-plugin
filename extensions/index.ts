@@ -23,16 +23,22 @@ import { registerAdminCommand } from "../lib/admin.js";
 import { oauthLogin } from "../lib/oauth.js";
 import { registerLemonadeProvider } from "../lib/provider.js";
 import { syncModelStore } from "../lib/sync-store.js";
+import { bootstrapUserParams } from "../lib/model-params.js";
 import { tuneModelPayload, envFlag } from "../lib/payload-tuning.js";
 import { writePayloadDebugLog } from "../lib/payload-debug.js";
 
 export default async function lemonadeProvider(pi: ExtensionAPI): Promise<void> {
+  // Cold start: a missing user catalog is seeded from the bundled examples
+  // BEFORE model sync, so fresh installs get reasoning flags + tuning
+  // without manual setup. Never touches an existing file.
+  bootstrapUserParams();
+
   const oauthBlock = {
     name: PROVIDER_LABEL,
     login: (callbacks: Parameters<typeof oauthLogin>[1]): ReturnType<typeof oauthLogin> =>
       oauthLogin(pi, callbacks, oauthBlock),
     refreshToken: async (creds: Awaited<ReturnType<typeof oauthLogin>>): Promise<Awaited<ReturnType<typeof oauthLogin>>> => {
-      const payload = { ...decodeCreds(creds) }; // spread: avoid mutating original creds
+      const payload = decodeCreds(creds);
       if (payload.baseUrl) {
         try {
           await registerLemonadeProvider(pi, payload, oauthBlock);
@@ -42,19 +48,11 @@ export default async function lemonadeProvider(pi: ExtensionAPI): Promise<void> 
         // Keep models-store.json in sync during token refresh too.
         syncModelStore(payload.baseUrl, payload.apiKey);
       }
-      // Fallback: try to resolve baseUrl from env if stored creds are stale
-      if (!payload.baseUrl) {
-        const envUrl = process.env.LEMONADE_BASE_URL;
-        if (envUrl) {
-          payload.baseUrl = envUrl.replace(/\/+$/, "");
-        }
-      }
       return encodeCreds(payload);
     },
     getApiKey: (creds: Awaited<ReturnType<typeof oauthLogin>>): string => {
       const payload = decodeCreds(creds);
-      // Also check creds.access as a fallback for apiKey
-      return payload.apiKey || (creds as any).access || "";
+      return payload.apiKey || "";
     },
   };
 
@@ -64,7 +62,6 @@ export default async function lemonadeProvider(pi: ExtensionAPI): Promise<void> 
     name: PROVIDER_LABEL,
     baseUrl: "http://localhost:8000/v1",
     api: "openai-completions",
-    auth_type: "api-key",
     models: [],
     oauth: oauthBlock,
   });
@@ -85,18 +82,16 @@ export default async function lemonadeProvider(pi: ExtensionAPI): Promise<void> 
 
   registerAdminCommand(pi, oauthBlock);
 
-  // Model-driven payload tuning (P2 budgets, P3 vendor sampling,
-  // P5 off-level wire off-switch + /no_think fallback). Runs on pi's `before_provider_request`
-  // event: the handler receives the FINAL wire payload and its return
-  // value replaces it. What is tuned is decided by the per-model catalog
-  // (lib/model-params.ts + lib/model-params.json, user tier in
-  // ~/.pi/agent/model-params.json) — uncatalogued models pass through
-  // with default pi behavior. All tuning stays in this plugin
-  // (mainstream pi is untouched). Env: LPB_PAYLOAD_TUNING (master),
-  // LPB_SAMPLING_PROFILE, LPB_NO_THINK_SUFFIX, LPB_MODEL_PARAMS_FILE.
-  // LPB_PAYLOAD_DEBUG=1 (devstack .env): log the payload as left by this
-  // handler for ALL models to /tmp/pi-payload-capture.jsonl.
-  pi.on("before_provider_request", (event: { payload?: Record<string, unknown> }, ctx?: { thinkingLevel?: string; model?: { id?: string } }) => {
+  // Model-driven payload tuning (P2 budgets, P3 sampling, P5 off-level wire
+  // off-switch). Runs on pi's `before_provider_request` event: the handler
+  // receives the FINAL wire payload and its return value replaces it. What
+  // is tuned is decided by the per-model catalog (user tier over plugin
+  // tier) — uncatalogued models pass through with default pi behavior,
+  // byte-identical. All tuning stays in this plugin (mainstream pi is
+  // untouched). Env: LEMONADE_PAYLOAD_TUNING (master switch),
+  // LEMONADE_SAMPLING_PROFILE. LEMONADE_PAYLOAD_DEBUG=1: log the payload as
+  // left by this handler for ALL models to /tmp/pi-payload-capture.jsonl.
+  pi.on("before_provider_request", (event: { payload?: Record<string, unknown> }, ctx?: { thinkingLevel?: string }) => {
     const payload = event?.payload;
     if (!payload || typeof payload !== "object") return undefined;
     let tuned: Record<string, unknown> | undefined;
@@ -106,12 +101,10 @@ export default async function lemonadeProvider(pi: ExtensionAPI): Promise<void> 
       // Tuning must never break a request — pass through untouched.
       tuned = undefined;
     }
-    if (envFlag("LPB_PAYLOAD_DEBUG", false)) {
-      writePayloadDebugLog(tuned ?? payload, {
-        model: ctx?.model?.id,
-        thinkingLevel: ctx?.thinkingLevel,
-      });
+    if (envFlag("LEMONADE_PAYLOAD_DEBUG", false)) {
+      writePayloadDebugLog(tuned ?? payload);
     }
     return tuned;
   });
+
 }

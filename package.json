@@ -13,20 +13,23 @@
   ],
   "license": "MIT",
   "scripts": {
-    "test": "jiti test/model-mapping.test.ts && jiti test/model-tuning.test.ts && jiti test/thinking-multi-level.test.ts && jiti test/model-probe.test.ts"
+    "test": "jiti test/model-mapping.test.ts && jiti test/model-probe.test.ts && jiti test/gguf-params.test.ts && jiti test/model-tuning.test.ts && jiti test/thinking-multi-level.test.ts"
   },
   "author": "Lemonade SDK",
-  "homepage": "https://github.com/lpb-stack/lemonade-pi-plugin",
+  "homepage": "https://github.com/lemonade-sdk/lemonade-pi-plugin",
   "repository": {
     "type": "git",
-    "url": "https://github.com/lpb-stack/lemonade-pi-plugin.git"
+    "url": "https://github.com/lemonade-sdk/lemonade-pi-plugin.git"
   },
   "bugs": {
-    "url": "https://github.com/lpb-stack/lemonade-pi-plugin/issues"
+    "url": "https://github.com/lemonade-sdk/lemonade-pi-plugin/issues"
   },
   "peerDependencies": {
     "@earendil-works/pi-coding-agent": "*",
     "@earendil-works/pi-ai": "*"
+  },
+  "devDependencies": {
+    "jiti": "^2.7.0"
   },
   "pi": {
     "extensions": ["extensions/index.ts"]

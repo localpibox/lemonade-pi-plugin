@@ -159,59 +159,86 @@ export async function probeVision(
 }
 
 /**
- * Assemble the catalog entry to write for `/lemonade tune`. Merges probe
- * results over any existing user-tier entry (existing fields win unless
- * overwritten by an explicit probe result). Vendor sampling defaults are
- * suggested for known families; the caller confirms before writing.
+ * Assemble the catalog entry to write for `/lemonade tune`. Writes ONLY
+ * what was sourced or probed — no invented defaults:
+ *
+ *   - capabilities (reasoning/vision) — from the live probes (they win
+ *     over server tags, which are wrong in both directions on several
+ *     models);
+ *   - sampling row — from the checkpoint's embedded GGUF
+ *     `general.sampling.*` kvs, when available; placed in the row that
+ *     matches the probe result (thinking row for reasoners, nonThinking
+ *     row otherwise). Absent GGUF kvs → row left unset → server defaults
+ *     stand, the user completes values in the editor;
+ *   - everything else (budgets, ceiling, offParams, effortMap) — untouched
+ *     by the probe flow; it comes from the curated example catalog or is
+ *     set manually.
+ *
+ * Every written field is recorded in an `_meta` provenance block
+ * (ignored by the tuning engine, rendered by the UI).
  */
+export interface ParamSource {
+  field: string;
+  source: "probe" | "gguf";
+  ref?: string;
+}
+
+export interface TunedEntryMeta {
+  probedAt: string;
+  probe: {
+    thinking?: boolean;
+    vision?: boolean;
+    honorsBudget?: boolean | null;
+  };
+  paramsSource: ParamSource[];
+}
+
 export function buildTunedEntry(
   model: LemonadeModelInfo,
   thinking: ThinkingProbeResult | undefined,
   vision: VisionProbeResult | undefined,
+  gguf: { sampling?: { temp?: number; top_p?: number; top_k?: number; min_p?: number }; ref?: string } | undefined,
   existing: Record<string, unknown> | undefined,
 ): Record<string, unknown> {
   const out: Record<string, unknown> = { ...(existing ?? {}) };
+  const meta: TunedEntryMeta = {
+    probedAt: new Date().toISOString(),
+    probe: {},
+    paramsSource: [],
+  };
 
   if (thinking && !thinking.error) {
     out.reasoning = thinking.emitsReasoning;
+    meta.probe.thinking = thinking.emitsReasoning;
+    meta.probe.honorsBudget = thinking.honorsBudget ?? null;
+    meta.paramsSource.push({ field: "reasoning", source: "probe" });
   }
-  if (vision) out.vision = vision.vision;
-
-  // Response ceiling: keep existing, else default 16384 for reasoning models.
-  if (out.maxTokens === undefined && out.reasoning === true) out.maxTokens = 16384;
-
-  // Suggest vendor sampling rows when reasoning is confirmed and absent.
-  const family = suggestFamily(model);
-  if (out.reasoning === true && family && !out.thinking) {
-    out.thinking = family.thinking;
-    out.coding = family.coding;
-    out.nonThinking = family.nonThinking;
-    out.offParams = { enable_thinking: false };
+  if (vision) {
+    out.vision = vision.vision;
+    meta.probe.vision = vision.vision;
+    meta.paramsSource.push({ field: "vision", source: "probe" });
   }
 
+  // GGUF sampling kvs → the row matching the probe result, only when that
+  // row is absent (existing user values always win). GGUF key names map to
+  // the catalog schema (temp → temperature).
+  if (gguf?.sampling && meta.probe.thinking !== undefined) {
+    const row: Record<string, number> = {};
+    if (gguf.sampling.temp !== undefined) row.temperature = gguf.sampling.temp;
+    if (gguf.sampling.top_p !== undefined) row.top_p = gguf.sampling.top_p;
+    if (gguf.sampling.top_k !== undefined) row.top_k = gguf.sampling.top_k;
+    if (gguf.sampling.min_p !== undefined) row.min_p = gguf.sampling.min_p;
+    if (Object.keys(row).length > 0) {
+      const rowKey = meta.probe.thinking ? "thinking" : "nonThinking";
+      if (out[rowKey] === undefined) {
+        out[rowKey] = row;
+        for (const field of Object.keys(row)) {
+          meta.paramsSource.push({ field: `${rowKey}.${field}`, source: "gguf", ref: gguf.ref });
+        }
+      }
+    }
+  }
+
+  out._meta = meta;
   return out;
-}
-
-/** Vendor-recommended sampling defaults per model family (see docs). */
-function suggestFamily(model: LemonadeModelInfo): {
-  thinking: Record<string, number>;
-  coding: Record<string, number>;
-  nonThinking: Record<string, number>;
-} | undefined {
-  const n = `${model.id} ${model.name ?? ""}`.toLowerCase();
-  if (n.includes("qwen")) {
-    return {
-      thinking: { temperature: 1.0, top_p: 0.95, top_k: 20, min_p: 0.0, presence_penalty: 0.0, repetition_penalty: 1.0 },
-      coding: { temperature: 0.6, top_p: 0.95, top_k: 20, min_p: 0.0, presence_penalty: 0.0, repetition_penalty: 1.0 },
-      nonThinking: { temperature: 0.7, top_p: 0.8, top_k: 20, min_p: 0.0, presence_penalty: 1.5, repetition_penalty: 1.0 },
-    };
-  }
-  if (n.includes("gemma")) {
-    return {
-      thinking: { temperature: 1.0, top_p: 0.95, top_k: 64, min_p: 0.0, presence_penalty: 0.0, repetition_penalty: 1.0 },
-      coding: { temperature: 0.6, top_p: 0.95, top_k: 64, min_p: 0.0, presence_penalty: 0.0, repetition_penalty: 1.0 },
-      nonThinking: { temperature: 0.7, top_p: 0.8, top_k: 64, min_p: 0.0, presence_penalty: 1.5, repetition_penalty: 1.0 },
-    };
-  }
-  return undefined;
 }

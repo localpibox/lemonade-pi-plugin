@@ -26,8 +26,8 @@ export interface ExtensionAPI {
   on(
     event: "before_provider_request",
     handler: (
-      event: { type: "before_provider_request"; payload: Record<string, unknown> },
-      ctx: { thinkingLevel?: string },
+      event: { type: "before_provider_request"; payload?: Record<string, unknown> },
+      ctx: { thinkingLevel?: string; model?: { id?: string } },
     ) => Record<string, unknown> | undefined,
   ): void;
 }
@@ -96,6 +96,13 @@ export interface LemonadeModelInfo {
   backend_url?: string;
   config?: Record<string, unknown>;
   labels?: string[];
+  /**
+   * Checkpoint pointer in Lemonade's `"<hf-repo>:<file>"` shape (e.g.
+   * `unsloth/Qwen3.8-27B-GGUF:Qwen3.8-27B-UD-Q4_K_XL.gguf`). Used by
+   * `/lemonade tune` to fetch the checkpoint's embedded GGUF sampling
+   * metadata.
+   */
+  checkpoint?: string;
 }
 
 // ─── OAuth types ────────────────────────────────────────────────────────────

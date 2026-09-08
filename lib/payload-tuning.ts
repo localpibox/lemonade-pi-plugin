@@ -29,36 +29,26 @@
  *          payload are filled — explicit payload values (pi
  *          model.samplingParams, user config) always win.
  *
- *   offParams / noThinkSuffix (P5) — at the off level (no budget field,
- *          no effort) the server's `--reasoning on` default would run
- *          UNBOUNDED thinking. The catalog `offParams` row (fill-missing)
- *          supplies the wire-level hard off — Qwen entries ship
+ *   offParams (P5) — at the off level (no budget field, no effort) the
+ *          server's `--reasoning on` default would run UNBOUNDED thinking.
+ *          The catalog `offParams` row (fill-missing) supplies the
+ *          wire-level hard off — Qwen entries ship
  *          { "enable_thinking": false }, honored per-request by the
  *          running lemonade server (validated 2026-09-03, two models,
- *          0 reasoning in 7/7 runs; the earlier "waits on llama.cpp
- *          PR #22336" note is stale). Whenever a wire `enable_thinking`
- *          field is present in either direction (explicit payload or
- *          offParams), the model-native `/no_think` text suffix is
- *          skipped; it remains the fallback for models/servers without a
- *          wire off — appended to the LAST user message of the wire copy
- *          (string + array content, idempotent); session history keeps
- *          the original text. The token is per-model: entry
- *          `noThinkSuffix` (default: the Qwen3.x `/no_think` token;
- *          empty string disables it for that model).
+ *          0 reasoning in 7/7 runs). Models whose backend exposes no
+ *          wire off simply keep the server's default behavior.
  *
  * Env (read at request time; defaults are correct for this stack):
- *   LPB_PAYLOAD_TUNING=off      master switch — disable ALL tuning
- *   LPB_SAMPLING_PROFILE=coding select the coding thinking row (default: general)
- *   LPB_NO_THINK_SUFFIX=off     disable the /no_think fallback append only
- *   LPB_MODEL_PARAMS_FILE=<p>   user catalog path (default: ~/.pi/agent/model-params.json)
- *   LPB_PAYLOAD_DEBUG=1         capture every payload (lib/payload-debug.ts)
+ *   LEMONADE_PAYLOAD_TUNING=off     master switch — disable ALL tuning
+ *   LEMONADE_SAMPLING_PROFILE=coding select the coding thinking row (default: general)
+ *   LEMONADE_PARAMS_FILE=<p>        user catalog path (default: ~/.pi/agent/model-params.json)
+ *   LEMONADE_PAYLOAD_DEBUG=1        capture every payload (lib/payload-debug.ts)
  *
  * The QWEN_* spellings from the 2026-09-01 first cut are retired — this
  * layer is model-generic, the catalog decides what is tuned.
  */
 
 import { resolveModelEntry, thinkingRow, type SamplingParams, type ModelParamsEntry } from "./model-params.js";
-import { NO_THINK_SUFFIX } from "./payload-debug.js";
 
 /** Map a pi effort string to the model-specific server value (effortMap), or pass through. */
 function mapEffort(entry: ModelParamsEntry | undefined, effort: string | undefined): string | undefined {
@@ -113,64 +103,6 @@ export function applySampling(out: Record<string, unknown>, params: SamplingPara
   return applyFillRow(out, params);
 }
 
-/**
- * Append the off-switch token (default: /no_think) to the LAST user
- * message of a wire-format message array (OpenAI chat shape: content is
- * string | content-part array). Returns a new array (input untouched) or
- * undefined if nothing to do.
- */
-export function appendNoThink(
-  messages: unknown,
-  suffix: string = NO_THINK_SUFFIX,
-): Record<string, unknown>[] | undefined {
-  if (!suffix) return undefined;
-  if (!Array.isArray(messages)) return undefined;
-  let lastUser = -1;
-  for (let i = messages.length - 1; i >= 0; i--) {
-    const m = messages[i] as Record<string, unknown> | undefined;
-    if (m && m.role === "user") {
-      lastUser = i;
-      break;
-    }
-  }
-  if (lastUser === -1) return undefined;
-
-  const msg = messages[lastUser] as Record<string, unknown>;
-  const content = msg.content;
-
-  if (typeof content === "string") {
-    if (content.trimEnd().endsWith(suffix)) return undefined;
-    const copy = [...messages] as Record<string, unknown>[];
-    copy[lastUser] = { ...msg, content: `${content} ${suffix}` };
-    return copy;
-  }
-
-  if (Array.isArray(content)) {
-    let lastText = -1;
-    for (let i = content.length - 1; i >= 0; i--) {
-      const part = content[i] as Record<string, unknown> | undefined;
-      if (part && part.type === "text" && typeof part.text === "string") {
-        lastText = i;
-        break;
-      }
-    }
-    const parts = [...content] as Record<string, unknown>[];
-    if (lastText === -1) {
-      parts.push({ type: "text", text: ` ${suffix}` });
-    } else {
-      const text = parts[lastText].text as string;
-      if (text.trimEnd().endsWith(suffix)) return undefined;
-      parts[lastText] = { ...parts[lastText], text: `${text} ${suffix}` };
-    }
-    const copy = [...messages] as Record<string, unknown>[];
-    copy[lastUser] = { ...msg, content: parts };
-    return copy;
-  }
-
-  // No text content at all — nothing to attach the suffix to.
-  return undefined;
-}
-
 export interface TuneModelPayloadOptions {
   /** ctx.thinkingLevel — cross-check only; the wire fields are the source of truth. */
   thinkingLevel?: string;
@@ -178,7 +110,7 @@ export interface TuneModelPayloadOptions {
 
 /**
  * Tune a wire payload for a CATALOGUED model (P2 budgets + P3 sampling +
- * P5 /no_think). Values come from the per-model catalog (user tier merged
+ * P5 off-level wire fields). Values come from the per-model catalog (user tier merged
  * over plugin tier; see lib/model-params.ts).
  *
  * Returns a NEW payload when anything changed, or undefined when the
@@ -189,7 +121,7 @@ export function tuneModelPayload(
   payload: Record<string, unknown>,
   opts: TuneModelPayloadOptions = {},
 ): Record<string, unknown> | undefined {
-  if (!envFlag("LPB_PAYLOAD_TUNING", true)) return undefined;
+  if (!envFlag("LEMONADE_PAYLOAD_TUNING", true)) return undefined;
 
   const modelId = typeof payload.model === "string" ? payload.model : "";
   const entry = modelId ? resolveModelEntry(modelId) : undefined;
@@ -254,18 +186,6 @@ export function tuneModelPayload(
     //    Qwen entries ship { "enable_thinking": false }; the running
     //    lemonade server honors it per-request (validated 2026-09-03).
     if (entry.offParams) changed = applyFillRow(out, entry.offParams) || changed;
-    // ── P5: model-native off-switch token — FALLBACK only: skipped
-    //    whenever a wire `enable_thinking` field decides the level in
-    //    either direction (explicit payload or offParams above).
-    const wireDecides = out.enable_thinking === true || out.enable_thinking === false;
-    if (!wireDecides && envFlag("LPB_NO_THINK_SUFFIX", true)) {
-      const suffix = entry.noThinkSuffix !== undefined ? entry.noThinkSuffix : NO_THINK_SUFFIX;
-      const messages = suffix ? appendNoThink(out.messages, suffix) : undefined;
-      if (messages) {
-        out.messages = messages;
-        changed = true;
-      }
-    }
   }
 
   return changed ? out : undefined;

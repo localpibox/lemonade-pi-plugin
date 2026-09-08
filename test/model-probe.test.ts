@@ -3,7 +3,7 @@
  * Live probe functions (probeThinking/probeVision) need a running server;
  * they are exercised end-to-end via /lemonade tune.
  */
-import { buildTunedEntry } from "../lib/model-probe.js";
+import { buildTunedEntry, type TunedEntryMeta } from "../lib/model-probe.js";
 import type { LemonadeModelInfo } from "../lib/types.js";
 
 let fail = 0;
@@ -12,74 +12,101 @@ function check(name: string, cond: boolean, extra?: unknown) {
   if (!cond) fail++;
 }
 
-const qwen: LemonadeModelInfo = {
-  id: "Qwen3.9-Test-GGUF",
-  name: "Qwen3.9-Test-GGUF",
+const model: LemonadeModelInfo = {
+  id: "Some-Model-27B-GGUF",
+  name: "Some-Model-27B-GGUF",
   labels: ["chat"],
   recipe: "llamacpp",
   config: {},
 } as LemonadeModelInfo;
 
-const gemma: LemonadeModelInfo = { ...qwen, id: "Gemma-9-Test-GGUF", name: "Gemma-9-Test-GGUF" } as LemonadeModelInfo;
-const unknown: LemonadeModelInfo = { ...qwen, id: "Mystery-7B-GGUF", name: "Mystery-7B-GGUF" } as LemonadeModelInfo;
+const ggufQwen = {
+  sampling: { temp: 1.0, top_p: 0.95, top_k: 20 } as const,
+  ref: "unsloth/Some-Model-GGUF:Some-Model-UD-Q4_K_XL.gguf",
+};
 
-// 1. Thinking confirmed + vision yes → full entry with Qwen sampling defaults
+// 1. Thinking confirmed + vision yes + GGUF kvs → thinking row from GGUF,
+//    provenance recorded, NO invented ceiling.
 let e = buildTunedEntry(
-  qwen,
+  model,
   { emitsReasoning: true, honorsBudget: true, reasoningCharsSmall: 100, reasoningCharsLarge: 900 },
   { vision: true, detail: "answered" },
+  ggufQwen,
   undefined,
 );
-check("thinking+vision: reasoning=true", e.reasoning === true, e);
-check("thinking+vision: vision=true", e.vision === true);
-check("thinking: maxTokens defaulted to 16384", e.maxTokens === 16384);
-check("qwen family: thinking row suggested (temp 1.0)", (e.thinking as any)?.temperature === 1.0, e.thinking);
-check("qwen family: coding row suggested (temp 0.6)", (e.coding as any)?.temperature === 0.6);
-check("qwen family: nonThinking row suggested", (e.nonThinking as any)?.top_p === 0.8);
-check("offParams suggested for reasoning model", (e.offParams as any)?.enable_thinking === false);
+check("thinking+vision: reasoning=true", e.reasoning === true, e.reasoning);
+check("thinking+vision: vision=true", e.vision === true, e.vision);
+check("thinking row from GGUF (temp 1.0)", (e.thinking as Record<string, number>)?.temperature === 1.0, e.thinking);
+check("thinking row from GGUF (top_k 20)", (e.thinking as Record<string, number>)?.top_k === 20, e.thinking);
+check("no maxTokens invented (left unset)", e.maxTokens === undefined, e.maxTokens);
+check("no nonThinking row for a reasoner", e.nonThinking === undefined);
 
-// 2. No thinking → no maxTokens default, no sampling rows
+const meta1 = e._meta as TunedEntryMeta | undefined;
+check("_meta present", meta1 !== undefined);
+check("_meta.probedAt is an ISO date", !!meta1?.probedAt && !Number.isNaN(Date.parse(meta1.probedAt)), meta1?.probedAt);
+check("_meta.probe.thinking=true", meta1?.probe.thinking === true);
+check("_meta.probe.vision=true", meta1?.probe.vision === true);
+check(
+  "_meta.paramsSource covers reasoning/vision + 3 gguf fields",
+  meta1?.paramsSource.length === 5 &&
+    meta1.paramsSource.some((s) => s.field === "reasoning" && s.source === "probe") &&
+    meta1.paramsSource.some((s) => s.field === "vision" && s.source === "probe") &&
+    meta1.paramsSource.filter((s) => s.source === "gguf").length === 3,
+  meta1?.paramsSource,
+);
+check("_meta gguf source carries the checkpoint ref",
+  meta1?.paramsSource.some((s) => s.source === "gguf" && s.ref === ggufQwen.ref));
+
+// 2. No thinking + GGUF kvs → nonThinking row (not thinking)
 e = buildTunedEntry(
-  qwen,
+  model,
   { emitsReasoning: false, honorsBudget: undefined, reasoningCharsSmall: 0, reasoningCharsLarge: 0 },
   { vision: false, detail: "failed" },
+  ggufQwen,
   undefined,
 );
 check("no thinking: reasoning=false", e.reasoning === false);
-check("no thinking: no maxTokens default", e.maxTokens === undefined);
-check("no thinking: no sampling rows", e.thinking === undefined && e.offParams === undefined);
+check("no thinking: GGUF kvs → nonThinking row", (e.nonThinking as Record<string, number>)?.top_p === 0.95, e.nonThinking);
+check("no thinking: no thinking row", e.thinking === undefined);
+check("no thinking: no maxTokens", e.maxTokens === undefined);
 
-// 3. Probe error → capabilities untouched (existing entry preserved)
+// 3. Probe error → capabilities untouched, existing entry preserved
 const existing = { reasoning: true, vision: true, maxTokens: 8192 };
 e = buildTunedEntry(
-  qwen,
+  model,
   { emitsReasoning: false, honorsBudget: undefined, reasoningCharsSmall: 0, reasoningCharsLarge: 0, error: "timeout" },
   { vision: false, detail: "failed" },
+  ggufQwen,
   existing,
 );
-check("probe error: existing reasoning preserved", e.reasoning === true, e);
+check("probe error: existing reasoning preserved", e.reasoning === true, e.reasoning);
 check("probe error: existing maxTokens preserved", e.maxTokens === 8192);
 check("probe error: vision updated from probe", e.vision === false);
+check("probe error: no gguf row (reasoning unknown)", e.thinking === undefined && e.nonThinking === undefined, e);
 
-// 4. Gemma family → top_k 64 sampling defaults
+// 4. No GGUF data → capabilities written, sampling left unset (defaults stand)
 e = buildTunedEntry(
-  gemma,
-  { emitsReasoning: true, honorsBudget: true, reasoningCharsSmall: 50, reasoningCharsLarge: 400 },
-  { vision: true, detail: "ok" },
-  undefined,
-);
-check("gemma family: thinking row top_k=64", (e.thinking as any)?.top_k === 64, e.thinking);
-
-// 5. Unknown family → no sampling suggestion, but capabilities still written
-e = buildTunedEntry(
-  unknown,
+  model,
   { emitsReasoning: true, honorsBudget: false, reasoningCharsSmall: 10, reasoningCharsLarge: 300 },
   { vision: false, detail: "no" },
   undefined,
+  undefined,
 );
-check("unknown family: reasoning=true written", e.reasoning === true);
-check("unknown family: no sampling suggestion", e.thinking === undefined);
-check("unknown family: maxTokens still defaulted (reasoning model)", e.maxTokens === 16384);
+check("no gguf: reasoning=true still written", e.reasoning === true);
+check("no gguf: sampling left unset", e.thinking === undefined && e.nonThinking === undefined, e);
+
+// 5. Existing user sampling row wins over GGUF
+e = buildTunedEntry(
+  model,
+  { emitsReasoning: true, honorsBudget: true, reasoningCharsSmall: 10, reasoningCharsLarge: 300 },
+  { vision: false, detail: "no" },
+  ggufQwen,
+  { thinking: { temperature: 0.3 } },
+);
+check("existing row wins over gguf", (e.thinking as Record<string, number>)?.temperature === 0.3, e.thinking);
+const meta5 = e._meta as TunedEntryMeta;
+check("no gguf provenance recorded when row pre-exists",
+  !meta5.paramsSource.some((s) => s.source === "gguf"), meta5.paramsSource);
 
 console.log(fail === 0 ? "\nALL PASS" : `\n${fail} FAILURES`);
 process.exit(fail === 0 ? 0 : 1);

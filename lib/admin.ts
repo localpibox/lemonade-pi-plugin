@@ -12,12 +12,13 @@ import { PROVIDER_ID } from "./constants.js";
 import { decodeCreds } from "./credentials.js";
 import { checkHealth, fetchModels } from "./http.js";
 import { registerLemonadeProvider } from "./provider.js";
+import { syncModelStore } from "./sync-store.js";
 import { discoverViaBeacon, discoverViaHttp } from "./discovery.js";
 import { fmtHealth } from "./health.js";
 import { changeModelContext } from "./change-ctx.js";
-import { syncModelStore } from "./sync-store.js";
 import { probeThinking, probeVision, buildTunedEntry } from "./model-probe.js";
-import { readUserParams, USER_PARAMS_PATH } from "./model-params.js";
+import { fetchGgufParams } from "./gguf-params.js";
+import { readUserParams, userParamsPath, USER_PARAMS_PATH } from "./model-params.js";
 
 // ─── Format helpers ─────────────────────────────────────────────────────────
 
@@ -88,7 +89,7 @@ export function registerAdminCommand(pi: ExtensionAPI, oauthBlock: unknown): voi
             "  refresh            — re-fetch model list and re-register provider\n" +
             "  discover           — UDP beacon + HTTP port scan\n" +
             "  change-ctx <ctx_size> [model] — change context size for loaded model\n" +
-            "  tune <id>          — probe a model's capabilities (thinking/vision) and configure it in model-params.json",
+            "  tune <id>          — probe a model (thinking/vision) and configure it in the per-model catalog",
           "info",
         );
         return;
@@ -373,13 +374,14 @@ export function registerAdminCommand(pi: ExtensionAPI, oauthBlock: unknown): voi
           return;
         }
 
-        // ── tune (probe capabilities + write catalog entry) ───────────────
+        // ── tune (probe capabilities + GGUF metadata → catalog entry) ────
         case "tune": {
           const id = rest[0];
           if (!id) {
             ctx.ui.notify(
               "Usage: /lemonade tune <model_id>\n" +
                 "Probes the RUNNING server for thinking and vision support,\n" +
+                "fetches the checkpoint's embedded GGUF sampling metadata,\n" +
                 "then writes/updates the model's entry in " + USER_PARAMS_PATH + ".\n" +
                 "Slow when the model is not loaded (server loads it first).",
               "warning",
@@ -428,12 +430,36 @@ export function registerAdminCommand(pi: ExtensionAPI, oauthBlock: unknown): voi
             );
           }
 
+          // Checkpoint-exact sampling metadata from the GGUF file itself
+          // (general.sampling.* kvs). Absent → left unset, user completes it.
+          let gguf: { sampling?: { temp?: number; top_p?: number; top_k?: number; min_p?: number }; ref?: string } | undefined;
+          if (model.checkpoint) {
+            ctx.ui.notify(`  fetching GGUF metadata from checkpoint (${model.checkpoint})…`, "info");
+            const info = await fetchGgufParams(model.checkpoint);
+            if (info?.sampling && Object.keys(info.sampling).length > 0) {
+              gguf = { sampling: info.sampling, ref: model.checkpoint };
+              const s = info.sampling;
+              ctx.ui.notify(
+                `  gguf: temp=${s.temp ?? "—"} top_p=${s.top_p ?? "—"} top_k=${s.top_k ?? "—"} min_p=${s.min_p ?? "—"}` +
+                  (info.architecture ? ` arch=${info.architecture}` : ""),
+                "info",
+              );
+            } else {
+              ctx.ui.notify(
+                `  gguf: no embedded sampling metadata — sampling rows left unset (server defaults stand)`,
+                "info",
+              );
+            }
+          } else {
+            ctx.ui.notify(`  gguf: no checkpoint pointer on this model — skipped`, "info");
+          }
+
           const existing = readUserParams()?.[model.id];
-          const entry = buildTunedEntry(model, thinking, vision, existing);
+          const entry = buildTunedEntry(model, thinking, vision, gguf, existing);
           const json = JSON.stringify(entry, null, 2);
 
           ctx.ui.notify(
-            `Proposed catalog entry for ${model.id} (merged over existing user-tier entry):\n` +
+            `Proposed catalog entry for ${model.id} (merged over existing user-tier entry; provenance in _meta):\n` +
               "```json\n" + json + "\n```",
             "info",
           );
@@ -441,28 +467,28 @@ export function registerAdminCommand(pi: ExtensionAPI, oauthBlock: unknown): voi
           let answer = "yes";
           if (ctx.ui.input) {
             answer = (await ctx.ui.input(
-              `Write this entry to ${USER_PARAMS_PATH}? [yes/no/edit-later]`,
+              `Write this entry to ${userParamsPath()}? [yes/no/edit-later]`,
               "yes",
             ))?.trim().toLowerCase();
           }
           if (answer === "no" || answer === "edit-later") {
-            ctx.ui.notify("Not written. Copy the entry above into " + USER_PARAMS_PATH + " manually.", "info");
+            ctx.ui.notify("Not written. Copy the entry above into " + userParamsPath() + " manually.", "info");
             return;
           }
 
           try {
-            const file = process.env.LPB_MODEL_PARAMS_FILE?.trim() || USER_PARAMS_PATH;
+            const file = userParamsPath();
             let data: Record<string, unknown> = {};
             try {
               data = JSON.parse(await fs.readFile(file, "utf8"));
             } catch {
-              /* missing or corrupt → start fresh (corrupt case warned below) */
+              /* missing or corrupt → start fresh (corrupt case: existing entry already merged above) */
             }
             data[model.id] = entry;
             await fs.mkdir(path.dirname(file), { recursive: true });
             await fs.writeFile(file, JSON.stringify(data, null, 2) + "\n");
           } catch (e) {
-            ctx.ui.notify(`Failed to write ${USER_PARAMS_PATH}: ${String(e)}`, "error");
+            ctx.ui.notify(`Failed to write ${userParamsPath()}: ${String(e)}`, "error");
             return;
           }
 
@@ -471,7 +497,7 @@ export function registerAdminCommand(pi: ExtensionAPI, oauthBlock: unknown): voi
           syncModelStore(payload.baseUrl, payload.apiKey);
           ctx.ui.notify(
             `✓ ${model.id} configured. Provider re-registered — capabilities active now.\n` +
-              `(Budgets/sampling apply per-request; maxTokens/capabilities on this re-sync.)`,
+              `(Sampling applies per-request; capabilities/maxTokens apply on this re-sync.)`,
             "info",
           );
           return;

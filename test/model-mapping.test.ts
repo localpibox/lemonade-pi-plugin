@@ -1,5 +1,10 @@
+// Catalog fixture via the user tier (the shipped plugin tier is empty —
+// entries are user configuration, not built-in defaults).
+import * as path from "node:path";
 import { mapToProviderModel } from "../lib/models.js";
 import type { LemonadeModelInfo } from "../lib/types.js";
+
+process.env.LEMONADE_PARAMS_FILE = path.join(__dirname, "fixtures", "model-params-fixture.json");
 
 // Real model info shape from lemonade /v1/models (Qwen3.6-35B-A3B-MTP-GGUF)
 const qwenMtp: LemonadeModelInfo = {
@@ -94,6 +99,29 @@ check("uncatalogued r1 recipe: reasoning=true (upstream recipe baseline)", ur.re
 const ui = mapToProviderModel(uncataloguedImage);
 check("uncatalogued image model: input includes image (upstream category check)",
   (ui as any).input?.includes("image"), (ui as any).input);
+
+// ── Context window priority chain (preserved from the sync/creds fixes) ──
+// loaded ctx_size > top-level max_context_window > config > 128k fallback
+const ctxUnloaded: LemonadeModelInfo = {
+  id: "CtxModel-27B-MTP-GGUF", name: "CtxModel-27B-MTP-GGUF", recipe: "llamacpp",
+  max_context_window: 262144, config: {},
+} as LemonadeModelInfo;
+check("unloaded MTP: contextWindow from top-level max_context_window (262144)",
+  (mapToProviderModel(ctxUnloaded) as any).contextWindow === 262144,
+  (mapToProviderModel(ctxUnloaded) as any).contextWindow);
+
+const ctxLoaded: LemonadeModelInfo = {
+  id: "CtxModel", name: "CtxModel", recipe: "llamacpp",
+  max_context_window: 262144, recipe_options: { ctx_size: 32768 } as LemonadeModelInfo["recipe_options"],
+  config: { max_context_window: 131072 },
+} as LemonadeModelInfo;
+check("loaded: ctx_size (32768) beats max_context_window and config",
+  (mapToProviderModel(ctxLoaded) as any).contextWindow === 32768,
+  (mapToProviderModel(ctxLoaded) as any).contextWindow);
+
+const ctxBare: LemonadeModelInfo = { id: "CtxBare", name: "CtxBare", recipe: "llamacpp", config: {} } as LemonadeModelInfo;
+check("no ctx data: 128000 fallback", (mapToProviderModel(ctxBare) as any).contextWindow === 128000,
+  (mapToProviderModel(ctxBare) as any).contextWindow);
 
 console.log(fail === 0 ? "\nALL PASS" : `\n${fail} FAILURES`);
 process.exit(fail === 0 ? 0 : 1);
