@@ -18,6 +18,7 @@ import {
   PLAIN_STYLE,
   type TuneScreenState,
 } from "../lib/tune-screen.js";
+import { tuneThemeStyle } from "../lib/admin.js";
 
 let fail = 0;
 function check(name: string, cond: boolean, extra?: unknown) {
@@ -262,6 +263,27 @@ const idx = (path: string) => TUNE_FIELDS.findIndex((f) => f.path === path);
 
   // Original entry object is not mutated (structuredClone).
   check("adapter: caller entry untouched", JSON.stringify(entry) === JSON.stringify({ reasoning: true }), entry);
+}
+
+// ─── Theme wiring regression (admin.tuneThemeStyle) ───────────────────────────
+// pi passes a Theme whose `fg` is a PROTOTYPE method reading `this.fgColors`.
+// Detaching it (const fg = theme.fg) makes `this` undefined at render time and
+// crashed the TUI: "Cannot read properties of undefined (reading 'fgColors')".
+// Arrow-function stubs in tests never catch this, so mimic the real shape.
+{
+  class FakePiTheme {
+    fgColors: Map<string, string> = new Map([ ["accent", "\u001b[38;5;39m"], ["dim", "\u001b[2m"], ["success", "\u001b[32m"], ["warning", "\u001b[33m"] ]);
+    fg(color: string, text: string): string {
+      const ansi = this.fgColors.get(color);
+      if (!ansi) throw new Error(`Unknown theme color: ${color}`);
+      return `${ansi}${text}\u001b[39m`;
+    }
+  }
+  const style = tuneThemeStyle(new FakePiTheme());
+  const t = style.title("Tune Qwen");
+  check("theme: prototype-method fg stays this-bound at render", t.includes("Tune Qwen") && t.includes("\u001b[38;5;39m"), t);
+  check("theme: dim/ok/warn all render", style.dim("d").includes("d") && style.ok("o").includes("o") && style.warn("w").includes("w"));
+  check("theme: undefined theme degrades to plain text", tuneThemeStyle(undefined).title("x") === "x");
 }
 
 console.log(fail === 0 ? "\nAll tune-screen tests passed." : `\n${fail} test(s) FAILED`);

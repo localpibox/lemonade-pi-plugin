@@ -35,9 +35,13 @@ import {
 } from "./tune-screen.js";
 import { matchesKey } from "@earendil-works/pi-tui";
 
-/** Theme wiring for the tune mask (degrades to plain text when absent). */
-function tuneThemeStyle(theme: { fg?: (color: string, text: string) => string } | undefined): TuneStyle {
-  const fg = theme?.fg ?? ((_c: string, s: string) => s);
+// ─── Theme wiring for the tune mask ─────────────────────────────────────────
+// (degrades to plain text when absent)
+export function tuneThemeStyle(theme: { fg?: (color: string, text: string) => string } | undefined): TuneStyle {
+  // theme.fg is a prototype method that reads `this.fgColors` — it must stay
+  // bound to `theme`; detaching it (const fg = theme.fg) makes `this` undefined
+  // at render time and crashes the TUI with "reading 'fgColors'".
+  const fg = theme?.fg ? (c: string, s: string) => theme.fg!(c, s) : (_c: string, s: string) => s;
   return {
     title: (s) => fg("accent", s),
     accent: (s) => fg("accent", s),
