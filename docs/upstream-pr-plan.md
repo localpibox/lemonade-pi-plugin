@@ -107,7 +107,21 @@ says; otherwise leave unset.**
    file (e.g. a Gemma GGUF) to confirm cross-family behavior before the
    resolver is default-on in `tune`.
 
-## Phase B — `/lemonade tune` TUI (as designed, review after implementation)
+## Phase B — `/lemonade tune` TUI
+
+**Status (2026-09-08): B-lite implemented** (commit `4e7a4e7` on `lpb-dev` —
+`lib/tune-ui.ts` + rewritten `case "tune"` in `lib/admin.ts`):
+
+- No-arg browse screen (catalogued user/plugin tiers vs on-server +
+  orphans), readable per-model overview with per-field provenance
+  (✓probe / [gguf: file]) from `_meta`, interactive field editor
+  (select sections → fields → values, Enter keeps, budgets
+  monotonicity + maxTokens−1024 cap + sampling ranges, live re-render),
+  `--json` / `--yes` flags.
+- Full custom TUI via `ctx.ui.custom()` (verified available in installed
+  pi 0.84.4 — richer than this plan assumed: `@earendil-works/pi-tui`
+  `SelectList`/`SettingsList`/overlays exist) remains the upgrade path
+  if the notify+select flow proves limiting.
 
 Sub-commands:
 ```
