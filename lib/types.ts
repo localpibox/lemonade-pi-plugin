@@ -37,6 +37,19 @@ export interface PiCommandContext {
     notify(message: string, level?: "info" | "warning" | "error"): void;
     input?(prompt: string, placeholder?: string): Promise<string>;
     select?<T>(prompt: string, options: T[]): Promise<T>;
+    /**
+     * pi's custom-UI host (docs/tui.md): open a fullscreen component and
+     * await its result. Structurally typed — the component object is the
+     * standard { render, handleInput, invalidate } triple.
+     */
+    custom?<T>(
+      factory: (
+        tui: { requestRender(): void },
+        theme: { fg?: (color: string, text: string) => string },
+        keybindings: unknown,
+        done: (value: T) => void,
+      ) => { render(width: number): string[]; handleInput?(data: string): void; invalidate(): void },
+    ): Promise<T>;
   };
   signal?: AbortSignal;
 }

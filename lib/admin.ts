@@ -26,10 +26,26 @@ import {
   type ModelParamsEntry,
 } from "./model-params.js";
 import {
-  editEntryLoop,
   renderEntryOverview,
   tunePickerOptions,
 } from "./tune-ui.js";
+import {
+  createTuneScreen,
+  type TuneStyle,
+} from "./tune-screen.js";
+import { matchesKey } from "@earendil-works/pi-tui";
+
+/** Theme wiring for the tune mask (degrades to plain text when absent). */
+function tuneThemeStyle(theme: { fg?: (color: string, text: string) => string } | undefined): TuneStyle {
+  const fg = theme?.fg ?? ((_c: string, s: string) => s);
+  return {
+    title: (s) => fg("accent", s),
+    accent: (s) => fg("accent", s),
+    dim: (s) => fg("dim", s),
+    ok: (s) => fg("success", s),
+    warn: (s) => fg("warning", s),
+  };
+}
 
 // ─── Format helpers ─────────────────────────────────────────────────────────
 
@@ -504,57 +520,85 @@ export function registerAdminCommand(pi: ExtensionAPI, oauthBlock: unknown): voi
             "info",
           );
 
-          // Interactive editor (Phase B-lite): select a section → field →
-          // value; Enter keeps; overview re-renders after each edit.
-          if (!flags.includes("--yes") && ctx.ui.select && ctx.ui.input) {
-            const edited = await editEntryLoop(
-              {
-                notify: (m, l) => ctx.ui.notify(m, l),
-                select: (p, o) => ctx.ui.select!(p, o),
-                input: (p, ph) => ctx.ui.input!(p, ph),
-              },
-              model.id,
-              entry,
+          // Fullscreen tune mask: every tunable in one list, ↑↓/tab to move,
+          // ←→ to toggle/nudge, enter to edit, s to validate + write.
+          let alreadyWritten = false;
+          if (!flags.includes("--yes") && ctx.ui.custom) {
+            let lastWriteError: string | undefined;
+            let outcome: "saved" | "cancelled" = "cancelled";
+            await ctx.ui.custom<void>((tui, theme, _kb, done) =>
+              createTuneScreen({
+                entry,
+                meta: {
+                  id: model.id,
+                  tier,
+                  loaded: model.loaded,
+                  ctxWindow: model.max_context_window,
+                  tags: model.labels,
+                },
+                tui,
+                style: tuneThemeStyle(theme),
+                matches: matchesKey,
+                callbacks: {
+                  onCommit: (e) => {
+                    // Single sanctioned write path: atomic, never clobbers
+                    // a corrupt user file (reported back, screen stays open).
+                    const wr = upsertUserParamsEntry(model.id, e as ModelParamsEntry);
+                    if (wr === "abort-corrupt") {
+                      const msg =
+                        `${userParamsPath()} is corrupt and was left untouched.\n` +
+                        `Fix or remove the file, then re-run: /lemonade tune ${model.id}`;
+                      lastWriteError = msg;
+                      return msg;
+                    }
+                    if (wr === "error") {
+                      const msg = `Failed to write ${userParamsPath()}.`;
+                      lastWriteError = msg;
+                      return msg;
+                    }
+                    lastWriteError = undefined; // a later save supersedes earlier failures
+                    alreadyWritten = true;
+                    return "ok";
+                  },
+                  onClose: (committed) => {
+                    outcome = committed && !lastWriteError ? "saved" : "cancelled";
+                    done(undefined);
+                  },
+                },
+              }),
             );
-            if (!edited) {
+            if (outcome === "saved") {
+              // falls through to the re-sync below (entry already written)
+            } else if (lastWriteError) {
+              ctx.ui.notify(lastWriteError, "error");
+              return;
+            } else {
               ctx.ui.notify("Tune cancelled — nothing written.", "info");
-              return;
-            }
-            const next = await ctx.ui.select(
-              `Write the entry for ${model.id} to ${userParamsPath()}?`,
-              ["Write", "Show JSON only", "Cancel"],
-            );
-            if (!next || next.startsWith("Cancel")) {
-              ctx.ui.notify("Cancelled — nothing written.", "info");
-              return;
-            }
-            if (next.startsWith("Show JSON")) {
-              ctx.ui.notify(
-                "```json\n" + JSON.stringify(edited, null, 2) + "\n```\n" +
-                  "(nothing written — re-run /lemonade tune to edit)",
-                "info",
-              );
               return;
             }
           } else if (flags.includes("--yes")) {
             ctx.ui.notify(`Writing entry for ${model.id} (--yes — editor skipped).`, "info");
           }
 
-          // Single sanctioned write path: atomic (tmp+rename), and a corrupt
-          // user file is NEVER clobbered — the write is aborted with a warning.
-          const writeResult = upsertUserParamsEntry(model.id, entry as ModelParamsEntry);
-          if (writeResult === "abort-corrupt") {
-            ctx.ui.notify(
-              `NOT WRITTEN — ${userParamsPath()} is corrupt and was left untouched.\n` +
-                `Fix or remove the file, then re-run: /lemonade tune ${model.id}\n` +
-                "(re-running re-probes and re-offers the entry; nothing is lost)",
-              "error",
-            );
-            return;
-          }
-          if (writeResult === "error") {
-            ctx.ui.notify(`Failed to write ${userParamsPath()}.`, "error");
-            return;
+          if (alreadyWritten) {
+            // Written by the mask — skip the shared write path below.
+          } else {
+            // Single sanctioned write path: atomic (tmp+rename), and a corrupt
+            // user file is NEVER clobbered — the write is aborted with a warning.
+            const writeResult = upsertUserParamsEntry(model.id, entry as ModelParamsEntry);
+            if (writeResult === "abort-corrupt") {
+              ctx.ui.notify(
+                `NOT WRITTEN — ${userParamsPath()} is corrupt and was left untouched.\n` +
+                  `Fix or remove the file, then re-run: /lemonade tune ${model.id}\n` +
+                  "(re-running re-probes and re-offers the entry; nothing is lost)",
+                "error",
+              );
+              return;
+            }
+            if (writeResult === "error") {
+              ctx.ui.notify(`Failed to write ${userParamsPath()}.`, "error");
+              return;
+            }
           }
 
           // Re-sync so the new capabilities take effect without a restart.
