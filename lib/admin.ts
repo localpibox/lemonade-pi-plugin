@@ -18,8 +18,8 @@ import { syncModelStore } from "./sync-store.js";
 import { discoverViaBeacon, discoverViaHttp } from "./discovery.js";
 import { fmtHealth } from "./health.js";
 import { changeModelContext } from "./change-ctx.js";
-import { probeThinking, probeVision, buildTunedEntry } from "./model-probe.js";
-import type { ThinkingProbeResult, VisionProbeResult } from "./model-probe.js";
+import { probeThinking, probeVision, buildTunedEntry, ggufBackfillNeeded } from "./model-probe.js";
+import type { ThinkingProbeResult, VisionProbeResult, TunedEntryMeta } from "./model-probe.js";
 import { fetchGgufParams } from "./gguf-params.js";
 import {
   readPluginParams,
@@ -498,7 +498,8 @@ export function registerAdminCommand(pi: ExtensionAPI, oauthBlock: unknown): voi
 
           const labels = (model.labels ?? []).join(", ") || "(none)";
           const existing = readUserParams()?.[model.id];
-          const probedAt = (existing?._meta as { probedAt?: string } | undefined)?.probedAt;
+          const prevMeta = (existing?._meta ?? undefined) as TunedEntryMeta | undefined;
+          const probedAt = prevMeta?.probedAt;
           ctx.ui.notify(
             `Tuning ${model.id}\n` +
               `  server says: recipe=${model.recipe ?? "?"} labels=[${labels}]\n` +
@@ -561,10 +562,25 @@ export function registerAdminCommand(pi: ExtensionAPI, oauthBlock: unknown): voi
           }
 
           // Checkpoint-exact sampling metadata from the GGUF file itself
-          // (general.sampling.* kvs). Absent → left unset, user completes it.
-          // Runs on both paths — it is a metadata fetch, no server load.
+          // (general.sampling.* kvs). Fetched only when the backfill could
+          // actually write — target sampling row absent. A catalogued,
+          // user-amended model never pays the (slow) HF metadata fetch.
+          const targetRow: "thinking" | "nonThinking" | undefined =
+            doProbe && thinking && !thinking.error
+              ? thinking.emitsReasoning
+                ? "thinking"
+                : "nonThinking"
+              : prevMeta?.probe.thinking !== undefined
+                ? prevMeta.probe.thinking
+                  ? "thinking"
+                  : "nonThinking"
+                : undefined;
           let gguf: { sampling?: { temp?: number; top_p?: number; top_k?: number; min_p?: number }; ref?: string } | undefined;
-          if (model.checkpoint) {
+          if (!model.checkpoint) {
+            ctx.ui.notify(`  gguf: no checkpoint pointer on this model — skipped`, "info");
+          } else if (!ggufBackfillNeeded(true, targetRow, existing as Record<string, unknown> | undefined)) {
+            ctx.ui.notify(`  gguf: skipped — sampling row already set (no backfill needed)`, "info");
+          } else {
             ctx.ui.notify(`  fetching GGUF metadata from checkpoint (${model.checkpoint})…`, "info");
             const info = await fetchGgufParams(model.checkpoint);
             if (info?.sampling && Object.keys(info.sampling).length > 0) {
@@ -581,8 +597,6 @@ export function registerAdminCommand(pi: ExtensionAPI, oauthBlock: unknown): voi
                 "info",
               );
             }
-          } else {
-            ctx.ui.notify(`  gguf: no checkpoint pointer on this model — skipped`, "info");
           }
 
           const entry = buildTunedEntry(model, thinking, vision, gguf, existing as Record<string, unknown> | undefined);

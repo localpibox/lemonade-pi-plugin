@@ -193,6 +193,25 @@ export interface TunedEntryMeta {
   paramsSource: ParamSource[];
 }
 
+/**
+ * Should the checkpoint GGUF metadata be fetched? Only when it could be
+ * WRITTEN: the target sampling row must be absent from the existing entry.
+ * For a catalogued, user-amended model this is false → the (slow) HF
+ * metadata fetch is skipped. `targetRow` undefined (no probe knowledge,
+ * e.g. skip path with no prior probe) → needed only when both rows are absent.
+ */
+export function ggufBackfillNeeded(
+  hasCheckpoint: boolean,
+  targetRow: "thinking" | "nonThinking" | undefined,
+  existing: Record<string, unknown> | undefined,
+): boolean {
+  if (!hasCheckpoint) return false;
+  if (targetRow === undefined) {
+    return existing?.thinking === undefined && existing?.nonThinking === undefined;
+  }
+  return existing?.[targetRow] === undefined;
+}
+
 export function buildTunedEntry(
   model: LemonadeModelInfo,
   thinking: ThinkingProbeResult | undefined,

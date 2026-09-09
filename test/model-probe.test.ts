@@ -3,7 +3,7 @@
  * Live probe functions (probeThinking/probeVision) need a running server;
  * they are exercised end-to-end via /lemonade tune.
  */
-import { buildTunedEntry, type TunedEntryMeta } from "../lib/model-probe.js";
+import { buildTunedEntry, ggufBackfillNeeded, type TunedEntryMeta } from "../lib/model-probe.js";
 import type { LemonadeModelInfo } from "../lib/types.js";
 
 let fail = 0;
@@ -130,6 +130,15 @@ check("skip: capabilities untouched", eSkip.reasoning === true && eSkip.maxToken
 // Fresh probe (any result) still resets meta
 const eFresh = buildTunedEntry(model, { emitsReasoning: true, honorsBudget: false, reasoningCharsSmall: 0, reasoningCharsLarge: 0 } as never, undefined, undefined, { reasoning: false, _meta: prevMeta });
 check("fresh probe: meta reset (new probedAt, cleared probe)", (eFresh._meta as TunedEntryMeta).probedAt !== prevMeta.probedAt && (eFresh._meta as TunedEntryMeta).probe.thinking === true, eFresh._meta);
+
+// ── ggufBackfillNeeded: fetch only when it could write ──
+check("gguf: no checkpoint → never fetch", ggufBackfillNeeded(false, "thinking", undefined) === false);
+check("gguf: fresh entry + thinking target → fetch", ggufBackfillNeeded(true, "thinking", undefined) === true);
+check("gguf: catalogued with thinking row → no fetch", ggufBackfillNeeded(true, "thinking", { thinking: { temperature: 0.3 } }) === false);
+check("gguf: nonThinking target, row absent → fetch", ggufBackfillNeeded(true, "nonThinking", { thinking: { temperature: 0.3 } }) === true);
+check("gguf: nonThinking target, row set → no fetch", ggufBackfillNeeded(true, "nonThinking", { thinking: { temperature: 0.3 }, nonThinking: { temperature: 0.7 } }) === false);
+check("gguf: unknown target, both rows absent → fetch", ggufBackfillNeeded(true, undefined, {}) === true);
+check("gguf: unknown target, any row set → no fetch", ggufBackfillNeeded(true, undefined, { nonThinking: { temperature: 0.7 } }) === false);
 
 console.log(fail === 0 ? "\nALL PASS" : `\n${fail} FAILURES`);
 process.exit(fail === 0 ? 0 : 1);
