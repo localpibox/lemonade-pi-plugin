@@ -123,6 +123,14 @@ const ctxBare: LemonadeModelInfo = { id: "CtxBare", name: "CtxBare", recipe: "ll
 check("no ctx data: 128000 fallback", (mapToProviderModel(ctxBare) as any).contextWindow === 128000,
   (mapToProviderModel(ctxBare) as any).contextWindow);
 
+// ── Catalog contextWindow cap (user RAM-fit, shrink-only) ──
+const ctxCap: LemonadeModelInfo = { id: "CtxCap-Model", name: "CtxCap-Model", recipe: "llamacpp", max_context_window: 262144, config: {} } as LemonadeModelInfo;
+check("ctx cap: user cap shrinks server window (98304 < 262144)",
+  (mapToProviderModel(ctxCap) as any).contextWindow === 98304, (mapToProviderModel(ctxCap) as any).contextWindow);
+const ctxCapBig: LemonadeModelInfo = { id: "CtxCapBig-Model", name: "CtxCapBig-Model", recipe: "llamacpp", max_context_window: 262144, config: {} } as LemonadeModelInfo;
+check("ctx cap: cap above server value never expands (262144 stands)",
+  (mapToProviderModel(ctxCapBig) as any).contextWindow === 262144, (mapToProviderModel(ctxCapBig) as any).contextWindow);
+
 // ── Pi compatibility filter (chat ∧ tool-calling labels) ──
 const lmxOmni: LemonadeModelInfo = { id: "LMX-Omni-52B-Halo", name: "LMX-Omni-52B-Halo", labels: ["chat"], recipe: "llamacpp", config: {} } as LemonadeModelInfo;
 const whisper: LemonadeModelInfo = { id: "Whisper-Large-v3-Turbo", name: "Whisper-Large-v3-Turbo", labels: ["transcription", "realtime-transcription", "hot"], recipe: "llamacpp", config: {} } as LemonadeModelInfo;

@@ -121,6 +121,13 @@ export interface ModelParamsEntry {
    */
   thinkingTokenBudgetField?: string;
   /**
+   * Optional user cap on the context window (drives pi's compaction
+   * planning). Effective window = min(server-derived, cap) — shrink-only,
+   * e.g. to fit RAM; it can never expand beyond what the server actually
+   * allocated. Absent → the server-derived window stands.
+   */
+  contextWindow?: number;
+  /**
    * Response ceiling (max_completion_tokens) in tokens. Exact value — the
    * retired ctx-ratio formula (env + 0.06/0.125 constants + 16384 clamp)
    * is gone; this field is the single ceiling source. Applied at MODEL SYNC
@@ -368,6 +375,8 @@ export function resolveModelEntry(modelId: string): ModelParamsEntry | undefined
   if (offParams) merged.offParams = offParams;
   const maxTokens = over?.maxTokens ?? base?.maxTokens;
   if (typeof maxTokens === "number" && maxTokens > 0) merged.maxTokens = maxTokens;
+  const contextWindow = over?.contextWindow ?? base?.contextWindow;
+  if (typeof contextWindow === "number" && contextWindow > 0) merged.contextWindow = contextWindow;
   // Capability flags: user tier wins field-by-field
   for (const key of ["reasoning", "vision", "disableReasoning"] as const) {
     const v = over?.[key] ?? base?.[key];

@@ -5,7 +5,7 @@
  * model with every tunable value in a single ordered list:
  *
  *   - header: model id, tier, load state, ctx window
- *   - 20 fields in 5 groups (capabilities, ceiling, budgets, thinking
+ *   - 21 fields in 5 groups (capabilities, ceiling, budgets, thinking
  *     sampling, nonThinking sampling)
  *   - footer: live status line + key legend
  *
@@ -60,6 +60,7 @@ export const TUNE_FIELDS: TuneField[] = [
   { path: "vision", label: "vision", group: "capabilities", kind: "bool" },
   { path: "disableReasoning", label: "disableReasoning", group: "capabilities", kind: "bool" },
   { path: "maxTokens", label: "maxTokens", group: "ceiling", kind: "number", step: 1024, min: 1024 },
+  { path: "contextWindow", label: "contextWindow", group: "ceiling", kind: "number", step: 4096, min: 4096 },
   { path: "budgets.minimal", label: "budgets.minimal", group: "budgets", kind: "number", step: 512, min: 512, base: "maxTokens" },
   { path: "budgets.low", label: "budgets.low", group: "budgets", kind: "number", step: 512, min: 512, base: "maxTokens" },
   { path: "budgets.medium", label: "budgets.medium", group: "budgets", kind: "number", step: 512, min: 512, base: "maxTokens" },

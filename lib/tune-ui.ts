@@ -307,6 +307,8 @@ export function validateSamplingValue(
       return n >= 0 ? n : `repetition_penalty must be ≥ 0 (got ${n})`;
     case "maxTokens":
       return Number.isInteger(n) && n > 0 ? n : `maxTokens must be an integer > 0 (got ${v})`;
+    case "contextWindow":
+      return Number.isInteger(n) && n > 0 ? n : `contextWindow must be an integer > 0 (got ${v})`;
     default:
       return `unknown field "${field}"`;
   }

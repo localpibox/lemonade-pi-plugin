@@ -62,9 +62,11 @@ function hasImageInput(m: LemonadeModelInfo): boolean {
 export function mapToProviderModel(m: LemonadeModelInfo) {
   const cfg = m.config ?? {};
 
-  // Context window priority (unchanged): loaded model's actual ctx_size >
-  // model's top-level max_context_window > model definition's context window > fallback
-  const contextWindow =
+  // Context window priority: loaded model's actual ctx_size > model's
+  // top-level max_context_window > model definition's context window > fallback.
+  // A catalog `contextWindow` (user RAM-fit) caps it shrink-only — min(server, cap)
+  // — and can never expand beyond what the server has actually allocated.
+  const serverCtx =
     (m.recipe_options?.ctx_size as number) ??
     (m.max_context_window as number) ??
     (cfg["max_context_window"] as number) ??
@@ -73,6 +75,9 @@ export function mapToProviderModel(m: LemonadeModelInfo) {
     128000;
 
   const entry = resolveModelEntry(m.id);
+  const ctxCap = entry?.contextWindow;
+  const contextWindow =
+    typeof ctxCap === "number" && ctxCap > 0 ? Math.min(serverCtx, ctxCap) : serverCtx;
 
   let input: ("text" | "image")[] = ["text"];
   if (hasImageInput(m)) input.push("image");
