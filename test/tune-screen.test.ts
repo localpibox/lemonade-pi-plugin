@@ -191,6 +191,7 @@ const idx = (path: string) => TUNE_FIELDS.findIndex((f) => f.path === path);
   const lines = renderTuneScreen(s, 100, META, PLAIN_STYLE);
   const text = lines.join("\n");
   check("render: header has id + tier + loaded + ctx", text.includes("Qwen3.8-27B-GGUF") && text.includes("[user tier]") && text.includes("● loaded") && text.includes("ctx 262144"), lines[0]);
+  check("render: details (ctx · probe · tags) on their own line", lines[1].includes("ctx 262144") && lines[1].includes("last probe 2026-09-08") && lines[1].includes("tags:"), lines[1]);
   check("render: group headers present", text.includes("capabilities") && text.includes("budgets") && text.includes("thinking") && text.includes("nonThinking"), lines);
   check("render: cursor marker on field 0", lines.some((l) => l.startsWith("> ")), lines.slice(0, 3));
   check("render: values shown at a glance", text.includes("true") && text.includes("16384") && text.includes("0.95"), text);

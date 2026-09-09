@@ -386,11 +386,19 @@ export function renderTuneScreen(
     style.title(`Tune: ${meta.id}`),
     style.dim(`[${meta.tier}]`),
     style.dim(meta.loaded ? "● loaded" : "○ not loaded"),
+  ].filter(Boolean);
+  lines.push(truncate(headerBits.join("  "), width, style.title));
+
+  // Details on their own line — one line gets cramped/truncated fast once
+  // ctx + probe date + tags join the id.
+  const detailBits = [
     meta.ctxWindow ? style.dim(`ctx ${meta.ctxWindow}`) : "",
     meta.probedAt ? style.dim(`last probe ${meta.probedAt.slice(0, 10)}`) : "",
     meta.tags && meta.tags.length > 0 ? style.dim(`tags: ${meta.tags.join(",")}`) : "",
   ].filter(Boolean);
-  lines.push(truncate(headerBits.join("  "), width, style.title));
+  if (detailBits.length > 0) {
+    lines.push(truncate(detailBits.join("   ·   "), width, style.dim));
+  }
 
   let lastGroup = "";
   const labelW = Math.max(...TUNE_FIELDS.map((f) => f.label.length)) + 2;

@@ -161,8 +161,9 @@ const compModels = [qwenMtp, bonsai, whisper, lmxOmni];
   const c2 = lemonadeCompletions("", compModels);
   check("completion: empty → all subcommands", c2 !== null && c2.length >= 10, c2);
   const c3 = lemonadeCompletions("tune qw", compModels);
-  check("completion: tune + prefix → pi-visible qwen models", c3?.every((i) => i.value.toLowerCase().startsWith("qw")) && c3.some((i) => i.value === "Qwen3.6-35B-A3B-MTP-GGUF"), c3);
-  check("completion: non-chat models not completed", !c3?.some((i) => i.id === "Whisper-Large-v3-Turbo" || i.value === "Whisper-Large-v3-Turbo") && !(lemonadeCompletions("tune ", compModels) ?? []).some((i) => i.value === "Whisper-Large-v3-Turbo" || i.value === "LMX-Omni-52B-Halo"), lemonadeCompletions("tune ", compModels));
+  check("completion: tune + prefix → pi-visible qwen models", c3?.every((i) => i.value.toLowerCase().startsWith("tune ")) && c3.some((i) => i.value === "tune Qwen3.6-35B-A3B-MTP-GGUF"), c3);
+  check("completion: value carries 'tune ' back (pi replaces whole prefix)", (c3 ?? []).every((i) => i.value.startsWith("tune ") && i.label === i.value.slice(5)), c3);
+  check("completion: non-chat models not completed", !(lemonadeCompletions("tune ", compModels) ?? []).some((i) => i.value === "tune Whisper-Large-v3-Turbo" || i.value === "tune LMX-Omni-52B-Halo"), lemonadeCompletions("tune ", compModels));
   check("completion: no cache → null (no completions)", lemonadeCompletions("tune qw", undefined) === null);
   check("completion: deeper tokens → null", lemonadeCompletions("tune a b", compModels) === null);
 }

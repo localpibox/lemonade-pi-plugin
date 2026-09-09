@@ -89,11 +89,14 @@ export function lemonadeCompletions(
     (tokens.length === 2 && tokens[0].toLowerCase() === "tune") ||
     (tokens.length === 1 && tokens[0].toLowerCase() === "tune" && /\s$/.test(prefix));
   if (inTuneArgs) {
+    // pi replaces the ENTIRE argument prefix with item.value — so the value
+    // must carry the "tune " prefix back, or selecting a model would drop
+    // the subcommand and leave "/lemonade <id>" (wrong syntax).
     const items = (models ?? [])
       .filter((m) => isPiVisible(m))
       .map((m) => m.id)
       .filter((id) => id.toLowerCase().startsWith(last))
-      .map((v) => ({ value: v, label: v }));
+      .map((id) => ({ value: `tune ${id}`, label: id }));
     return items.length > 0 ? items : null;
   }
   if (tokens.length <= 1) {
