@@ -201,11 +201,13 @@ export function buildTunedEntry(
   existing: Record<string, unknown> | undefined,
 ): Record<string, unknown> {
   const out: Record<string, unknown> = { ...(existing ?? {}) };
-  const meta: TunedEntryMeta = {
-    probedAt: new Date().toISOString(),
-    probe: {},
-    paramsSource: [],
-  };
+  // No fresh probe (skip path) + prior provenance → keep it: don't fabricate
+  // a new probedAt or wipe paramsSource just because the user skipped probing.
+  const prevMeta = existing?._meta as TunedEntryMeta | undefined;
+  const meta: TunedEntryMeta =
+    !thinking && !vision && prevMeta
+      ? { probedAt: prevMeta.probedAt, probe: { ...prevMeta.probe }, paramsSource: [...prevMeta.paramsSource] }
+      : { probedAt: new Date().toISOString(), probe: {}, paramsSource: [] };
 
   if (thinking && !thinking.error) {
     out.reasoning = thinking.emitsReasoning;

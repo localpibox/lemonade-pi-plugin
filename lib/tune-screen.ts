@@ -357,6 +357,8 @@ export interface TuneScreenMeta {
   loaded?: boolean;
   ctxWindow?: number;
   tags?: string[];
+  /** ISO date the capabilities were last probed (catalog _meta). */
+  probedAt?: string;
 }
 
 const LEGEND = "↑↓/tab move · ←→ toggle/nudge · enter edit · s save · q/esc cancel";
@@ -385,6 +387,7 @@ export function renderTuneScreen(
     style.dim(`[${meta.tier}]`),
     style.dim(meta.loaded ? "● loaded" : "○ not loaded"),
     meta.ctxWindow ? style.dim(`ctx ${meta.ctxWindow}`) : "",
+    meta.probedAt ? style.dim(`last probe ${meta.probedAt.slice(0, 10)}`) : "",
     meta.tags && meta.tags.length > 0 ? style.dim(`tags: ${meta.tags.join(",")}`) : "",
   ].filter(Boolean);
   lines.push(truncate(headerBits.join("  "), width, style.title));
@@ -403,6 +406,10 @@ export function renderTuneScreen(
     let value: string;
     if (current && state.editing) {
       value = style.accent(`|${state.buffer}`) + style.accent("▌");
+    } else if (f.path === "contextWindow" && v === undefined) {
+      // Absent = no user cap — the server window stands. Show it instead of
+      // a bare "—" (display-only; the field is written only if the user sets it).
+      value = meta.ctxWindow ? style.dim(`— no cap (server ${meta.ctxWindow})`) : "—";
     } else {
       value = current ? style.accent(fmtValue(f, v)) : fmtValue(f, v);
     }

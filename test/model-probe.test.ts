@@ -108,5 +108,28 @@ const meta5 = e._meta as TunedEntryMeta;
 check("no gguf provenance recorded when row pre-exists",
   !meta5.paramsSource.some((s) => s.source === "gguf"), meta5.paramsSource);
 
+// ── Skip path: no fresh probe keeps prior _meta (no fake freshness) ──
+const prevMeta = {
+  probedAt: "2026-09-08T18:47:08.797Z",
+  probe: { thinking: true, honorsBudget: false, vision: true },
+  paramsSource: [{ field: "reasoning", source: "probe" as const }],
+};
+const eSkip = buildTunedEntry(
+  model,
+  undefined,
+  undefined,
+  undefined,
+  { reasoning: true, maxTokens: 16384, _meta: prevMeta },
+);
+const metaSkip = eSkip._meta as TunedEntryMeta;
+check("skip: probedAt preserved (no fabricated freshness)", metaSkip.probedAt === "2026-09-08T18:47:08.797Z", metaSkip.probedAt);
+check("skip: probe results preserved", metaSkip.probe.thinking === true && metaSkip.probe.vision === true, metaSkip.probe);
+check("skip: paramsSource preserved", metaSkip.paramsSource.length === 1, metaSkip.paramsSource);
+check("skip: capabilities untouched", eSkip.reasoning === true && eSkip.maxTokens === 16384, eSkip);
+
+// Fresh probe (any result) still resets meta
+const eFresh = buildTunedEntry(model, { emitsReasoning: true, honorsBudget: false, reasoningCharsSmall: 0, reasoningCharsLarge: 0 } as never, undefined, undefined, { reasoning: false, _meta: prevMeta });
+check("fresh probe: meta reset (new probedAt, cleared probe)", (eFresh._meta as TunedEntryMeta).probedAt !== prevMeta.probedAt && (eFresh._meta as TunedEntryMeta).probe.thinking === true, eFresh._meta);
+
 console.log(fail === 0 ? "\nALL PASS" : `\n${fail} FAILURES`);
 process.exit(fail === 0 ? 0 : 1);

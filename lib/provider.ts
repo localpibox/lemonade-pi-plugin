@@ -12,6 +12,16 @@ import { mapToProviderModel as mapFn, isPiVisible } from "./models.js";
 
 export { isReasoningModel, isPiCompatible, isPiVisible, mapToProviderModel } from "./models.js";
 
+/**
+ * Latest FULL server model list, captured at provider registration. Served
+ * to /lemonade argument completion (synchronous by contract — it cannot
+ * fetch live); undefined until the first registration fetch succeeds.
+ */
+let cachedServerModels: LemonadeModelInfo[] | undefined;
+export function getCachedServerModels(): LemonadeModelInfo[] | undefined {
+  return cachedServerModels;
+}
+
 // ─── Provider (re-)registration ─────────────────────────────────────────────
 
 /**
@@ -27,6 +37,7 @@ export async function registerLemonadeProvider(
   let providerModels: ReturnType<typeof mapFn>[] = [];
   if (baseUrl) {
     const raw = await fetchModels(baseUrl, payload?.apiKey);
+    cachedServerModels = raw;
     // Only chat + tool-calling models are usable in pi; non-chat classes
     // (tts/image/3d/embeddings/transcription) never reach the picker.
     providerModels = raw.filter(isPiVisible).map(mapFn);

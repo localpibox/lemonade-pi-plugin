@@ -26,7 +26,7 @@ function check(name: string, cond: boolean, extra?: unknown) {
   if (!cond) fail++;
 }
 
-const META = { id: "Qwen3.8-27B-GGUF", tier: "user tier", loaded: true, ctxWindow: 262144, tags: ["reasoning"] };
+const META = { id: "Qwen3.8-27B-GGUF", tier: "user tier", loaded: true, ctxWindow: 262144, tags: ["reasoning"], probedAt: "2026-09-08T18:47:08.797Z" };
 const idx = (path: string) => TUNE_FIELDS.findIndex((f) => f.path === path);
 
 // ─── Path access ────────────────────────────────────────────────────────────
@@ -195,6 +195,11 @@ const idx = (path: string) => TUNE_FIELDS.findIndex((f) => f.path === path);
   check("render: cursor marker on field 0", lines.some((l) => l.startsWith("> ")), lines.slice(0, 3));
   check("render: values shown at a glance", text.includes("true") && text.includes("16384") && text.includes("0.95"), text);
   check("render: no literal undefined in labels", !text.includes(".undefined"), text);
+  check("render: contextWindow absent → no-cap hint with server window", text.includes("— no cap (server 262144)"), text);
+  check("render: header shows last probe date", text.includes("last probe 2026-09-08"), lines[0]);
+  const s2 = createTuneState({ reasoning: true, contextWindow: 98304 });
+  const lines2 = renderTuneScreen(s2, 100, META, PLAIN_STYLE);
+  check("render: contextWindow set → plain value (no hint)", lines2.join("\n").includes("98304") && !lines2.join("\n").includes("no cap"), lines2);
   check("render: legend at bottom", lines[lines.length - 1].includes("↑↓/tab move") && lines[lines.length - 1].includes("s save"), lines[lines.length - 1]);
   check("render: status line above legend", lines[lines.length - 2].includes("s to save"), lines[lines.length - 2]);
 

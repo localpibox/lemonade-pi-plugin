@@ -11,12 +11,15 @@ import type { ExtensionAPI, OAuthCredentials, PiCommandContext } from "./types.j
 import { PROVIDER_ID } from "./constants.js";
 import { decodeCreds } from "./credentials.js";
 import { checkHealth, fetchModels } from "./http.js";
-import { registerLemonadeProvider } from "./provider.js";
+import { registerLemonadeProvider, getCachedServerModels } from "./provider.js";
+import { isPiVisible } from "./models.js";
+import type { AutocompleteItem } from "@earendil-works/pi-tui";
 import { syncModelStore } from "./sync-store.js";
 import { discoverViaBeacon, discoverViaHttp } from "./discovery.js";
 import { fmtHealth } from "./health.js";
 import { changeModelContext } from "./change-ctx.js";
 import { probeThinking, probeVision, buildTunedEntry } from "./model-probe.js";
+import type { ThinkingProbeResult, VisionProbeResult } from "./model-probe.js";
 import { fetchGgufParams } from "./gguf-params.js";
 import {
   readPluginParams,
@@ -49,6 +52,55 @@ export function tuneThemeStyle(theme: { fg?: (color: string, text: string) => st
     ok: (s) => fg("success", s),
     warn: (s) => fg("warning", s),
   };
+}
+
+// ─── /lemonade argument completion ─────────────────────────────────────────
+
+const LEMONADE_SUBCOMMANDS = [
+  "status",
+  "models",
+  "list",
+  "health",
+  "load",
+  "unload",
+  "pull",
+  "delete",
+  "refresh",
+  "change-ctx",
+  "tune",
+];
+
+/**
+ * Argument completion for /lemonade: subcommands first, then (for `tune`)
+ * model ids from the latest provider-registration fetch. Synchronous by pi
+ * contract — served from the registration cache (models param), never a live
+ * fetch. Pi-visible models are the default completion set; any other server
+ * model can still be typed explicitly.
+ */
+export function lemonadeCompletions(
+  prefix: string,
+  models: { id: string; labels?: string[] }[] | undefined,
+): AutocompleteItem[] | null {
+  const tokens = prefix.trim().split(/\s+/).filter(Boolean);
+  const last = tokens.length > 0 ? tokens[tokens.length - 1].toLowerCase() : "";
+  // Model-id context: "tune <partial>" — including the cursor right after
+  // the trailing space ("tune ").
+  const inTuneArgs =
+    (tokens.length === 2 && tokens[0].toLowerCase() === "tune") ||
+    (tokens.length === 1 && tokens[0].toLowerCase() === "tune" && /\s$/.test(prefix));
+  if (inTuneArgs) {
+    const items = (models ?? [])
+      .filter((m) => isPiVisible(m))
+      .map((m) => m.id)
+      .filter((id) => id.toLowerCase().startsWith(last))
+      .map((v) => ({ value: v, label: v }));
+    return items.length > 0 ? items : null;
+  }
+  if (tokens.length <= 1) {
+    const items = LEMONADE_SUBCOMMANDS.filter((c) => c.startsWith(last)).map((v) => ({ value: v, label: v }));
+    return items.length > 0 ? items : null;
+  }
+  return null;
 }
 
 // ─── Format helpers ─────────────────────────────────────────────────────────
@@ -102,6 +154,7 @@ export async function readStoredPayload(): Promise<{
 export function registerAdminCommand(pi: ExtensionAPI, oauthBlock: unknown): void {
   pi.registerCommand("lemonade", {
     description: "Lemonade server administration (status, models, load/pull/delete)",
+    getArgumentCompletions: (prefix: string) => lemonadeCompletions(prefix, getCachedServerModels()),
     handler: async (args: string, ctx: PiCommandContext) => {
       const parts = args.trim().split(/\s+/).filter(Boolean);
       const cmd = (parts[0] ?? "").toLowerCase();
@@ -124,6 +177,7 @@ export function registerAdminCommand(pi: ExtensionAPI, oauthBlock: unknown): voi
             "  tune <id>          — probe a model and interactively edit its catalog entry\n" +
             "  tune <id> --json   — probe, print the raw JSON entry only (no write)\n" +
             "  tune <id> --yes    — probe and write without the editor\n" +
+            "  tune <id> --no-probe — skip probing, keep catalog capabilities\n" +
             "                     (tune is slow when the model is not loaded)",
           "info",
         );
@@ -443,40 +497,72 @@ export function registerAdminCommand(pi: ExtensionAPI, oauthBlock: unknown): voi
           }
 
           const labels = (model.labels ?? []).join(", ") || "(none)";
+          const existing = readUserParams()?.[model.id];
+          const probedAt = (existing?._meta as { probedAt?: string } | undefined)?.probedAt;
           ctx.ui.notify(
             `Tuning ${model.id}\n` +
               `  server says: recipe=${model.recipe ?? "?"} labels=[${labels}]\n` +
-              `Probing the live server (may take minutes if the model must load)…`,
+              (existing
+                ? `  catalog: user-tier entry${probedAt ? ` (probed ${probedAt.slice(0, 10)})` : ""}`
+                : `  catalog: not in model-params (fresh entry)`),
             "info",
           );
 
-          ctx.ui.notify(`  probing thinking (2 budgeted requests)…`, "info");
-          const thinking = await probeThinking(baseUrl, apiKey, model.id);
-          if (thinking.error) {
-            ctx.ui.notify(`  thinking probe failed: ${thinking.error}`, "warning");
-          } else {
-            ctx.ui.notify(
-              `  thinking: emits=${thinking.emitsReasoning} honorsBudget=${thinking.honorsBudget}` +
-                ` (reasoning chars: small=${thinking.reasoningCharsSmall}, large=${thinking.reasoningCharsLarge})`,
-              "info",
+          // Already catalogued → probing is optional (slow: the model may
+          // have to load). Ask; --no-probe skips without asking, --yes keeps
+          // the historic probe-then-write contract.
+          let doProbe = !flags.includes("--no-probe");
+          if (existing && doProbe) {
+            const choice = await ctx.ui.select(
+              `${model.id} is already in the catalog. Re-probe against the live server? (slow — may load the model)`,
+              ["re-probe — refresh capabilities", "skip — keep catalog entry as-is"],
             );
+            if (!choice) {
+              ctx.ui.notify("Tune cancelled — nothing written.", "info");
+              return;
+            }
+            doProbe = choice.startsWith("re-probe");
           }
 
-          ctx.ui.notify(`  probing vision (image request)…`, "info");
-          const vision = await probeVision(baseUrl, apiKey, model.id);
-          ctx.ui.notify(`  vision: ${vision.vision ? "yes" : "no"} — ${vision.detail}`, "info");
+          let thinking: ThinkingProbeResult | undefined;
+          let vision: VisionProbeResult | undefined;
+          if (doProbe) {
+            ctx.ui.notify(`Probing the live server (may take minutes if the model must load)…`, "info");
 
-          // Tag/probe mismatch report (the whole point of probing)
-          const taggedReasoning = (model.labels ?? []).some((l) => l.toLowerCase() === "reasoning");
-          if (thinking && !thinking.error && taggedReasoning !== thinking.emitsReasoning) {
+            ctx.ui.notify(`  probing thinking (2 budgeted requests)…`, "info");
+            thinking = await probeThinking(baseUrl, apiKey, model.id);
+            if (thinking.error) {
+              ctx.ui.notify(`  thinking probe failed: ${thinking.error}`, "warning");
+            } else {
+              ctx.ui.notify(
+                `  thinking: emits=${thinking.emitsReasoning} honorsBudget=${thinking.honorsBudget}` +
+                  ` (reasoning chars: small=${thinking.reasoningCharsSmall}, large=${thinking.reasoningCharsLarge})`,
+                "info",
+              );
+            }
+
+            ctx.ui.notify(`  probing vision (image request)…`, "info");
+            vision = await probeVision(baseUrl, apiKey, model.id);
+            ctx.ui.notify(`  vision: ${vision.vision ? "yes" : "no"} — ${vision.detail}`, "info");
+
+            // Tag/probe mismatch report (the whole point of probing)
+            const taggedReasoning = (model.labels ?? []).some((l) => l.toLowerCase() === "reasoning");
+            if (thinking && !thinking.error && taggedReasoning !== thinking.emitsReasoning) {
+              ctx.ui.notify(
+                `  ⚠ tag mismatch: server labels say reasoning=${taggedReasoning}, probe says ${thinking.emitsReasoning} — trusting the probe.`,
+                "warning",
+              );
+            }
+          } else {
             ctx.ui.notify(
-              `  ⚠ tag mismatch: server labels say reasoning=${taggedReasoning}, probe says ${thinking.emitsReasoning} — trusting the probe.`,
-              "warning",
+              `  skip: keeping catalog capabilities as-is${flags.includes("--no-probe") ? " (--no-probe)" : ""}`,
+              "info",
             );
           }
 
           // Checkpoint-exact sampling metadata from the GGUF file itself
           // (general.sampling.* kvs). Absent → left unset, user completes it.
+          // Runs on both paths — it is a metadata fetch, no server load.
           let gguf: { sampling?: { temp?: number; top_p?: number; top_k?: number; min_p?: number }; ref?: string } | undefined;
           if (model.checkpoint) {
             ctx.ui.notify(`  fetching GGUF metadata from checkpoint (${model.checkpoint})…`, "info");
@@ -499,7 +585,6 @@ export function registerAdminCommand(pi: ExtensionAPI, oauthBlock: unknown): voi
             ctx.ui.notify(`  gguf: no checkpoint pointer on this model — skipped`, "info");
           }
 
-          const existing = readUserParams()?.[model.id];
           const entry = buildTunedEntry(model, thinking, vision, gguf, existing as Record<string, unknown> | undefined);
           const tier = existing ? "user tier (existing, merged)" : "new user-tier entry";
 
@@ -539,6 +624,7 @@ export function registerAdminCommand(pi: ExtensionAPI, oauthBlock: unknown): voi
                   loaded: model.loaded,
                   ctxWindow: model.max_context_window,
                   tags: model.labels,
+                  probedAt,
                 },
                 tui,
                 style: tuneThemeStyle(theme),

@@ -152,5 +152,20 @@ process.env.LEMONADE_ALL_MODELS = "1";
 check("filter: LEMONADE_ALL_MODELS=1 shows everything", isPiVisible(whisper) && isPiVisible(flux) && isPiVisible(lmxOmni));
 if (savedAll === undefined) delete process.env.LEMONADE_ALL_MODELS; else process.env.LEMONADE_ALL_MODELS = savedAll;
 
+// ── /lemonade argument completion (pure) ──
+import { lemonadeCompletions } from "../lib/admin.js";
+const compModels = [qwenMtp, bonsai, whisper, lmxOmni];
+{
+  const c = lemonadeCompletions("tun", compModels);
+  check("completion: subcommand prefix → tune", c?.some((i) => i.value === "tune"), c);
+  const c2 = lemonadeCompletions("", compModels);
+  check("completion: empty → all subcommands", c2 !== null && c2.length >= 10, c2);
+  const c3 = lemonadeCompletions("tune qw", compModels);
+  check("completion: tune + prefix → pi-visible qwen models", c3?.every((i) => i.value.toLowerCase().startsWith("qw")) && c3.some((i) => i.value === "Qwen3.6-35B-A3B-MTP-GGUF"), c3);
+  check("completion: non-chat models not completed", !c3?.some((i) => i.id === "Whisper-Large-v3-Turbo" || i.value === "Whisper-Large-v3-Turbo") && !(lemonadeCompletions("tune ", compModels) ?? []).some((i) => i.value === "Whisper-Large-v3-Turbo" || i.value === "LMX-Omni-52B-Halo"), lemonadeCompletions("tune ", compModels));
+  check("completion: no cache → null (no completions)", lemonadeCompletions("tune qw", undefined) === null);
+  check("completion: deeper tokens → null", lemonadeCompletions("tune a b", compModels) === null);
+}
+
 console.log(fail === 0 ? "\nALL PASS" : `\n${fail} FAILURES`);
 process.exit(fail === 0 ? 0 : 1);

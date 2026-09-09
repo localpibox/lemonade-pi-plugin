@@ -8,6 +8,8 @@
 
 // ─── Pi interfaces ──────────────────────────────────────────────────────────
 
+import type { AutocompleteItem } from "@earendil-works/pi-tui";
+
 export interface ExtensionAPI {
   registerProvider(id: string, config: Record<string, unknown>): void;
   unregisterProvider(id: string): void;
@@ -15,6 +17,8 @@ export interface ExtensionAPI {
     name: string,
     options: {
       description?: string;
+      /** Optional argument auto-completion (pi TUI); prefix is the raw args text. */
+      getArgumentCompletions?: (prefix: string) => AutocompleteItem[] | null;
       handler: (args: string, ctx: PiCommandContext) => Promise<void>;
     },
   ): void;
