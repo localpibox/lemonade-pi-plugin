@@ -173,9 +173,11 @@ check("catalog: summary shows capabilities", cat.includes("reasoning · maxToken
 
 const opts = tunePickerOptions(
   [
-    { id: "model-a", loaded: true },
-    { id: "model-b", loaded: false },
-    { id: "model-d" },
+    { id: "model-a", loaded: true, labels: ["chat", "tool-calling"] },
+    { id: "model-b", loaded: false, labels: ["chat", "vision", "tool-calling"] },
+    { id: "model-d", labels: ["chat", "tool-calling", "mtp"] },
+    { id: "whisper-x", loaded: true, labels: ["transcription", "realtime-transcription"] },
+    { id: "untagged-omni", labels: ["chat"] },
   ],
   {
     user: { "model-a": { reasoning: true, maxTokens: 16384 } },
@@ -186,6 +188,21 @@ check("picker: user tier row with load dot + caps", opts[0].id === "model-a" && 
 check("picker: plugin tier row", opts[1].id === "model-b" && opts[1].label === "○  model-b  [plugin]  vision", opts[1]);
 check("picker: uncatalogued row flagged", opts[2].id === "model-d" && opts[2].label === "○  model-d  [— not in model-params]", opts[2]);
 check("picker: id round-trips (label lookup safe)", opts.find((o) => o.label === opts[0].label)?.id === "model-a", opts);
+check("picker: non-chat model filtered out (whisper)", !opts.some((o) => o.id === "whisper-x"), opts.map((o) => o.id));
+check("picker: chat-only untagged model filtered out", !opts.some((o) => o.id === "untagged-omni"), opts.map((o) => o.id));
+{
+  const saved = process.env.LEMONADE_ALL_MODELS;
+  process.env.LEMONADE_ALL_MODELS = "1";
+  const all = tunePickerOptions(
+    [
+      { id: "model-a", loaded: true, labels: ["chat", "tool-calling"] },
+      { id: "whisper-x", loaded: true, labels: ["transcription"] },
+    ],
+    { user: {}, plugin: {} },
+  );
+  if (saved === undefined) delete process.env.LEMONADE_ALL_MODELS; else process.env.LEMONADE_ALL_MODELS = saved;
+  check("picker: LEMONADE_ALL_MODELS=1 shows non-chat models", all.some((o) => o.id === "whisper-x"), all.map((o) => o.id));
+}
 
 // ─── editEntryLoop (scripted fake UI) ───────────────────────────────────────
 

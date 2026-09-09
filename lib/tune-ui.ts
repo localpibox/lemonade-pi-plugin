@@ -20,6 +20,7 @@
  */
 
 import type { Budgets, SamplingParams } from "./model-params.js";
+import { isPiVisible } from "./models.js";
 
 // ─── UI contract (structural subset of pi's ctx.ui) ────────────────────────
 
@@ -220,14 +221,18 @@ export interface TunePickerOption {
 
 /**
  * Options for the no-arg `/lemonade tune` interactive picker. One compact
- * row per server model: load dot, id, catalog tier, capability summary.
+ * row per pi-compatible server model (chat + tool-calling labels, same gate
+ * as the picker registration — LEMONADE_ALL_MODELS=1 shows everything).
+ * Explicit `/lemonade tune <id>` remains the unfiltered route.
  * `[— not in model-params]` marks models with no user- or plugin-tier entry.
  */
 export function tunePickerOptions(
-  serverModels: { id: string; loaded?: boolean }[],
+  serverModels: { id: string; loaded?: boolean; labels?: string[] }[],
   catalog: CatalogView,
 ): TunePickerOption[] {
-  return serverModels.map((m) => {
+  return serverModels
+    .filter((m) => isPiVisible({ id: m.id, labels: m.labels }))
+    .map((m) => {
     const user = catalog.user?.[m.id];
     const plugin = catalog.plugin?.[m.id];
     const tier = user ? "[user]" : plugin ? "[plugin]" : "[— not in model-params]";

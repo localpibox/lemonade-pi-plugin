@@ -420,7 +420,7 @@ export function registerAdminCommand(pi: ExtensionAPI, oauthBlock: unknown): voi
           // catalog tier (user / plugin / not in model-params.json).
           if (!id) {
             const opts = tunePickerOptions(
-              models.map((m) => ({ id: m.id, loaded: m.loaded })),
+              models.map((m) => ({ id: m.id, loaded: m.loaded, labels: m.labels })),
               { user: readUserParams(), plugin: readPluginParams() },
             );
             const pick = await ctx.ui.select(

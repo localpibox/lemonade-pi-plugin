@@ -36,7 +36,7 @@ export function isReasoningModel(recipe: string | undefined): boolean {
  * tool-calling tag (e.g. untagged omni models) are excluded. Fix a
  * mis-tagged model at the source — the server recipe labels.
  */
-export function isPiCompatible(m: LemonadeModelInfo): boolean {
+export function isPiCompatible(m: Pick<LemonadeModelInfo, "id" | "labels">): boolean {
   const labels = m.labels ?? [];
   return labels.includes("chat") && labels.includes("tool-calling");
 }
@@ -45,7 +45,7 @@ export function isPiCompatible(m: LemonadeModelInfo): boolean {
  * Pi compatibility with escape hatch: LEMONADE_ALL_MODELS=1 shows every
  * server model (power users / testing non-chat models).
  */
-export function isPiVisible(m: LemonadeModelInfo): boolean {
+export function isPiVisible(m: Pick<LemonadeModelInfo, "id" | "labels">): boolean {
   return process.env.LEMONADE_ALL_MODELS ? true : isPiCompatible(m);
 }
 
