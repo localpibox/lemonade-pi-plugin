@@ -118,7 +118,6 @@ const idx = (path: string) => TUNE_FIELDS.findIndex((f) => f.path === path);
   check("nudge: contextWindow steps by 4096", getByPath(cap.entry, "contextWindow") === 94208, cap.entry);
   for (let i = 0; i < 50; i++) applyKey(cap, "left");
   check("nudge: contextWindow clamps at min (4096)", getByPath(cap.entry, "contextWindow") === 4096, cap.entry);
-}
 
   const s2 = createTuneState({});
   s2.cursor = idx("maxTokens");
