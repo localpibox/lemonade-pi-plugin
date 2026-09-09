@@ -1,34 +1,25 @@
 /**
  * @lemonade/lemonade-provider
  *
- * Phase B-lite UI for `/lemonade tune` (docs/analysis-2026-09-07.md).
- * Replaces the raw-JSON dump with:
+ * Shared pure logic for `/lemonade tune` (docs/analysis-2026-09-07.md):
  *
  *   - renderEntryOverview — human-readable one-block-per-model view with
  *     per-field provenance tags (✓probe / [gguf]) taken from the entry's
  *     `_meta` block (written by buildTunedEntry);
- *   - renderModelCatalog  — the no-arg `/lemonade tune` browse screen
- *     (catalogued vs on-server);
- *   - editEntryLoop       — interactive field editing built from pi's
- *     dialog primitives (select + input); "screens" are rendered blocks
- *     plus select loops because the plugin types against pi's dialog API;
+ *   - tunePickerOptions   — rows for the no-arg `/lemonade tune` interactive
+ *     picker (pi-compatible server models, catalog status per row);
  *   - validators          — budgets monotonicity, budget ≤ maxTokens − 1024,
- *     sampling value ranges (all pure, unit-tested).
+ *     sampling value ranges (all pure, unit-tested; shared by the
+ *     fullscreen mask in tune-screen.ts).
  *
- * Pure functions are exported separately from the interactive loop so the
- * tests never need a real UI.
+ * Pure functions are exported separately from any UI so the tests never
+ * need a real UI.
  */
 
-import type { Budgets, SamplingParams } from "./model-params.js";
+import type { Budgets } from "./model-params.js";
 import { isPiVisible } from "./models.js";
 
 // ─── UI contract (structural subset of pi's ctx.ui) ────────────────────────
-
-export interface TuneUi {
-  notify(message: string, level?: "info" | "warning" | "error"): void;
-  select(prompt: string, options: string[]): Promise<string | undefined>;
-  input(prompt: string, placeholder?: string): Promise<string | undefined>;
-}
 
 type Entry = Record<string, unknown>;
 
@@ -147,7 +138,7 @@ export function renderEntryOverview(
   return lines.join("\n");
 }
 
-// ─── Catalog browse screen (no-arg `/lemonade tune`) ────────────────────────
+// ─── Interactive picker (no-arg `/lemonade tune`) ───────────────────────────
 
 export interface CatalogView {
   user?: Record<string, Entry>;
@@ -161,58 +152,6 @@ function entrySummary(e: Entry): string {
   if (typeof e.maxTokens === "number") bits.push(`maxTokens ${e.maxTokens}`);
   return bits.length > 0 ? bits.join(" · ") : "(no capability flags)";
 }
-
-/**
- * Browse screen: every server model with its catalog status, plus catalog
- * entries that have no matching server model.
- */
-export function renderModelCatalog(
-  serverModels: { id: string; loaded?: boolean }[],
-  catalog: CatalogView,
-): string {
-  const lines: string[] = [];
-  lines.push(
-    `Model catalog — ${serverModels.length} on server, ` +
-      `${(Object.keys(catalog.user ?? {}).length +
-        Object.keys(catalog.plugin ?? {}).filter(
-          (k) => !catalog.user?.[k],
-        ).length)
-        .toLocaleString()} catalogued`,
-  );
-  lines.push("");
-  lines.push("ON SERVER:");
-  for (const m of serverModels) {
-    const user = catalog.user?.[m.id];
-    const plugin = catalog.plugin?.[m.id];
-    const status = user
-      ? "[user]    "
-      : plugin
-        ? "[plugin]  "
-        : "[—]       ";
-    const dot = m.loaded ? "●" : "○";
-    const summary = user || plugin ? entrySummary(user ?? plugin ?? {}) : "not catalogued — /lemonade tune <id>";
-    lines.push(`  ${dot} ${m.id}   ${status} ${summary}`);
-  }
-
-  const orphan = (tier: "user" | "plugin") =>
-    Object.keys(catalog[tier] ?? {}).filter(
-      (id) => !serverModels.some((m) => m.id === id),
-    );
-  const orphans = orphan("user").map((id) => ({ id, tier: "user" as const })).concat(
-    orphan("plugin").map((id) => ({ id, tier: "plugin" as const })),
-  );
-  if (orphans.length > 0) {
-    lines.push("");
-    lines.push("IN CATALOG, NOT ON SERVER:");
-    for (const { id, tier } of orphans) {
-      lines.push(`  — ${id}   [${tier}]   ${entrySummary(catalog[tier]?.[id] ?? {})}`);
-    }
-  }
-
-  return lines.join("\n");
-}
-
-// ─── Interactive picker (no-arg `/lemonade tune`) ───────────────────────────
 
 export interface TunePickerOption {
   label: string;
@@ -244,15 +183,6 @@ export function tunePickerOptions(
 }
 
 // ─── Validation (pure) ──────────────────────────────────────────────────────
-
-/** Parse a yes/no answer; "" (Enter) keeps the current value. */
-export function parseBoolAnswer(raw: string | undefined): boolean | "keep" | "invalid" {
-  const v = (raw ?? "").trim().toLowerCase();
-  if (v === "") return "keep";
-  if (["y", "yes", "t", "true", "1"].includes(v)) return true;
-  if (["n", "no", "f", "false", "0"].includes(v)) return false;
-  return "invalid";
-}
 
 /**
  * Validate the budgets row: present levels must be monotonic
@@ -314,127 +244,3 @@ export function validateSamplingValue(
   }
 }
 
-// ─── Interactive edit loop ──────────────────────────────────────────────────
-
-const BOOL_FIELDS = ["reasoning", "vision", "disableReasoning"] as const;
-
-const SAMPLING_FIELDS: { field: string; hint: string }[] = [
-  { field: "temperature", hint: "≥ 0" },
-  { field: "top_p", hint: "(0, 1]" },
-  { field: "top_k", hint: "integer ≥ 1" },
-  { field: "min_p", hint: "[0, 1)" },
-  { field: "presence_penalty", hint: "≥ 0" },
-  { field: "repetition_penalty", hint: "≥ 0" },
-];
-
-const BUDGET_LEVELS: (keyof Budgets)[] = ["minimal", "low", "medium", "high"];
-
-async function askUntil<T>(
-  ui: TuneUi,
-  prompt: string,
-  parse: (raw: string | undefined) => T | "keep" | string,
-): Promise<T | "keep"> {
-  for (;;) {
-    const raw = await ui.input(prompt);
-    const out = parse(raw);
-    if (out === "keep" || (typeof out !== "string" && out !== "keep")) return out;
-    // string → error message: re-ask, keep the same prompt
-    prompt = `⚠ ${out}\n${prompt}`;
-  }
-}
-
-/**
- * Interactive field editor: select a section → select a field → input a
- * value (Enter keeps). Re-renders the overview after each applied edit.
- *
- * @returns the (possibly edited) entry, or `undefined` when the user
- *          cancelled at any point.
- */
-export async function editEntryLoop(
-  ui: TuneUi,
-  id: string,
-  entry: Entry,
-): Promise<Entry | undefined> {
-  const e: Entry = { ...entry };
-  for (;;) {
-    const group = await ui.select(
-      `Edit ${id} — pick a section (Enter keeps current value for any field):`,
-      [
-        "capabilities — reasoning / vision / disableReasoning",
-        "ceiling — maxTokens",
-        "budgets — minimal / low / medium / high",
-        "sampling — thinking row",
-        "sampling — nonThinking row",
-        "done",
-      ],
-    );
-    if (!group || group.startsWith("done")) return e;
-
-    if (group.startsWith("capabilities")) {
-      const field = await ui.select("Which capability?", [...BOOL_FIELDS, "back"]);
-      if (!field || field === "back") continue;
-      const current = e[field];
-      const answer = await askUntil(
-        ui,
-        `${field} — current: ${fmtBool(current)} (yes / no / Enter keeps)`,
-        parseBoolAnswer,
-      );
-      if (answer !== "keep") e[field] = answer;
-    } else if (group.startsWith("ceiling")) {
-      const answer = await askUntil(
-        ui,
-        `maxTokens — current: ${e.maxTokens ?? "—"} (integer > 0 / Enter keeps)`,
-        (raw) => validateSamplingValue("maxTokens", raw),
-      );
-      if (answer !== "keep") {
-        e.maxTokens = answer;
-        // live-clamp check: budgets may now exceed the new ceiling
-        const b = e.budgets as Budgets | undefined;
-        if (b) {
-          const err = validateBudgets(b, answer);
-          if (err) ui.notify(`⚠ budgets no longer valid: ${err}`, "warning");
-        }
-      }
-    } else if (group.startsWith("budgets")) {
-      const level = await ui.select("Which budget level?", [...BUDGET_LEVELS, "back"]);
-      if (!level || level === "back") continue;
-      const budgets = { ...((e.budgets as Budgets) ?? {}) };
-      const current = budgets[level as keyof Budgets];
-      const answer = await askUntil(
-        ui,
-        `budgets.${level} — current: ${current ?? "—"} (integer > 0 / Enter keeps)`,
-        (raw) => validateSamplingValue("maxTokens", raw), // integer > 0
-      );
-      if (answer !== "keep") {
-        budgets[level as keyof Budgets] = answer;
-        const err = validateBudgets(budgets, e.maxTokens as number | undefined);
-        if (err) {
-          ui.notify(`Not applied — ${err}`, "warning");
-          continue;
-        }
-        e.budgets = budgets;
-      }
-    } else if (group.startsWith("sampling")) {
-      const rowKey = group.includes("nonThinking") ? "nonThinking" : "thinking";
-      const field = await ui.select(
-        `Which ${rowKey} field?`,
-        SAMPLING_FIELDS.map((f) => `${f.field} (${f.hint})`).concat("back"),
-      );
-      if (!field || field === "back") continue;
-      const fieldName = field.split(" ")[0];
-      const row = { ...((e[rowKey] as SamplingParams) ?? {}) };
-      const current = (row as Record<string, unknown>)[fieldName];
-      const answer = await askUntil(
-        ui,
-        `${rowKey}.${fieldName} — current: ${current ?? "—"} (${field.split(" (")[1]?.replace(")", "")} / Enter keeps)`,
-        (raw) => validateSamplingValue(fieldName, raw),
-      );
-      if (answer !== "keep") {
-        (row as Record<string, unknown>)[fieldName] = answer;
-        e[rowKey] = row;
-      }
-    }
-
-    ui.notify(renderEntryOverview(id, e), "info"); // re-render after each edit
-  }
-}

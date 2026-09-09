@@ -164,6 +164,8 @@ const compModels = [qwenMtp, bonsai, whisper, lmxOmni];
   check("completion: tune + prefix → pi-visible qwen models", c3?.every((i) => i.value.toLowerCase().startsWith("tune ")) && c3.some((i) => i.value === "tune Qwen3.6-35B-A3B-MTP-GGUF"), c3);
   check("completion: value carries 'tune ' back (pi replaces whole prefix)", (c3 ?? []).every((i) => i.value.startsWith("tune ") && i.label === i.value.slice(5)), c3);
   check("completion: non-chat models not completed", !(lemonadeCompletions("tune ", compModels) ?? []).some((i) => i.value === "tune Whisper-Large-v3-Turbo" || i.value === "tune LMX-Omni-52B-Halo"), lemonadeCompletions("tune ", compModels));
+  const c4 = lemonadeCompletions("tune ", compModels);
+  check("completion: bare 'tune ' → model list (not null, pi-visible only)", Array.isArray(c4) && c4.length > 0 && c4.every((i) => i.value === `tune ${i.label}` && !i.value.includes("Whisper")), c4);
   check("completion: no cache → null (no completions)", lemonadeCompletions("tune qw", undefined) === null);
   check("completion: deeper tokens → null", lemonadeCompletions("tune a b", compModels) === null);
 }

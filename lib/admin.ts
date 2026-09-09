@@ -92,10 +92,13 @@ export function lemonadeCompletions(
     // pi replaces the ENTIRE argument prefix with item.value — so the value
     // must carry the "tune " prefix back, or selecting a model would drop
     // the subcommand and leave "/lemonade <id>" (wrong syntax).
+    // The match tail is the raw text after the FINAL space — for "tune "
+    // that's "" (match every model), not the "tune" subcommand token.
+    const lastArg = prefix.slice(prefix.lastIndexOf(" ") + 1).toLowerCase();
     const items = (models ?? [])
       .filter((m) => isPiVisible(m))
       .map((m) => m.id)
-      .filter((id) => id.toLowerCase().startsWith(last))
+      .filter((id) => id.toLowerCase().startsWith(lastArg))
       .map((id) => ({ value: `tune ${id}`, label: id }));
     return items.length > 0 ? items : null;
   }

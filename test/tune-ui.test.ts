@@ -1,9 +1,9 @@
 /**
- * Unit tests for the Phase B-lite tune UI (lib/tune-ui.ts) and the shared
+ * Unit tests for the tune UI helpers (lib/tune-ui.ts) and the shared
  * safe-write path (lib/model-params.ts upsertUserParamsEntry).
  *
- * The interactive loop is exercised with a scripted fake TuneUi; the
- * write path with a temp file (LEMONADE_PARAMS_FILE override).
+ * The write path is exercised with a temp file (LEMONADE_PARAMS_FILE
+ * override); the renderers and validators are pure.
  */
 import * as fs from "node:fs";
 import * as os from "node:os";
@@ -11,13 +11,9 @@ import * as path from "node:path";
 import { upsertUserParamsEntry, seedModelEntry, readUserParams } from "../lib/model-params.js";
 import {
   renderEntryOverview,
-  renderModelCatalog,
   tunePickerOptions,
   validateBudgets,
   validateSamplingValue,
-  parseBoolAnswer,
-  editEntryLoop,
-  type TuneUi,
 } from "../lib/tune-ui.js";
 
 let fail = 0;
@@ -96,11 +92,6 @@ check(
 );
 check("validateBudgets: no maxTokens → no cap check", validateBudgets({ high: 999999 }) === undefined);
 
-check("parseBoolAnswer: yes", parseBoolAnswer("yes") === true);
-check("parseBoolAnswer: n", parseBoolAnswer(" n ") === false);
-check("parseBoolAnswer: empty keeps", parseBoolAnswer("") === "keep");
-check("parseBoolAnswer: garbage invalid", parseBoolAnswer("maybe") === "invalid");
-
 check("sampling: temp ok", validateSamplingValue("temperature", "0.6") === 0.6);
 check("sampling: temp negative → error", typeof validateSamplingValue("temperature", "-1") === "string");
 check("sampling: top_p 1 ok", validateSamplingValue("top_p", "1") === 1);
@@ -152,23 +143,6 @@ check("overview: probed line", ov.includes("2026-09-08T12:00:00.000Z") && ov.inc
 const bare = renderEntryOverview("plain-model", { reasoning: false });
 check("overview: minimal entry renders — placeholders", bare.includes("reasoning false") && bare.includes("maxTokens —"), bare);
 
-const cat = renderModelCatalog(
-  [
-    { id: "model-a", loaded: true },
-    { id: "model-b" },
-    { id: "model-d" },
-  ],
-  {
-    user: { "model-a": { reasoning: true, maxTokens: 16384 } },
-    plugin: { "model-b": { vision: true }, "model-c": { reasoning: true } },
-  },
-);
-check("catalog: user-tier model listed", cat.includes("model-a") && cat.includes("[user]") && cat.includes("●"), cat);
-check("catalog: plugin-tier model listed", cat.includes("model-b") && cat.includes("[plugin]"), cat);
-check("catalog: uncatalogued model flagged", cat.includes("model-d") && cat.includes("not catalogued — /lemonade tune <id>"), cat);
-check("catalog: orphan (in catalog, not on server)", cat.includes("IN CATALOG, NOT ON SERVER") && cat.includes("model-c"), cat);
-check("catalog: summary shows capabilities", cat.includes("reasoning · maxTokens 16384") && cat.includes("vision"), cat);
-
 // ─── tunePickerOptions (no-arg interactive picker) ──────────────────────────
 
 const opts = tunePickerOptions(
@@ -202,103 +176,6 @@ check("picker: chat-only untagged model filtered out", !opts.some((o) => o.id ==
   );
   if (saved === undefined) delete process.env.LEMONADE_ALL_MODELS; else process.env.LEMONADE_ALL_MODELS = saved;
   check("picker: LEMONADE_ALL_MODELS=1 shows non-chat models", all.some((o) => o.id === "whisper-x"), all.map((o) => o.id));
-}
-
-// ─── editEntryLoop (scripted fake UI) ───────────────────────────────────────
-
-function fakeUi(script: (ui: TuneUi) => void): { ui: TuneUi; notifications: string[] } {
-  const notifications: string[] = [];
-  const ui: TuneUi = {
-    notify: (m, l) => notifications.push(`[${l ?? "info"}] ${m}`),
-    select: async () => "PICK-ME",
-    input: async () => "",
-  };
-  script(ui);
-  return { ui, notifications };
-}
-
-// 1. Cancel at the first prompt → returns the untouched entry.
-{
-  const { ui } = fakeUi((u) => {
-    u.select = async () => undefined; // user hits Enter/Esc with no selection
-  });
-  const out = await editEntryLoop(ui, "m", { reasoning: true });
-  check("editLoop: cancel at group → entry unchanged", out !== undefined && out.reasoning === true);
-}
-
-// 2. "done" immediately → untouched entry.
-{
-  const { ui } = fakeUi((u) => {
-    u.select = async () => "done";
-  });
-  const out = await editEntryLoop(ui, "m", { reasoning: true });
-  check("editLoop: done → entry unchanged", out !== undefined && out.reasoning === true);
-}
-
-// 3. Edit maxTokens, then done → applied + re-rendered overview notified.
-{
-  const selects = ["ceiling — maxTokens", "done"];
-  const { ui, notifications } = fakeUi((u) => {
-    let i = 0;
-    u.select = async () => selects[i++];
-    u.input = async () => "32768";
-  });
-  const out = await editEntryLoop(ui, "m", {});
-  check("editLoop: maxTokens edited", out?.maxTokens === 32768, out);
-  check("editLoop: overview re-rendered after edit", notifications.some((n) => n.includes("maxTokens 32768")), notifications);
-}
-
-// 4. Invalid input re-asks, then valid value applies.
-{
-  const selects = ["ceiling — maxTokens", "done"];
-  const inputs = ["abc", "-5", "8192"];
-  const { ui, notifications } = fakeUi((u) => {
-    let i = 0, j = 0;
-    u.select = async () => selects[i++];
-    u.input = async () => inputs[j++];
-  });
-  const out = await editEntryLoop(ui, "m", {});
-  check("editLoop: invalid values re-asked until valid", out?.maxTokens === 8192, out);
-  check("editLoop: error surfaced in prompt", notifications.length >= 1, undefined);
-}
-
-// 5. Budget edit that breaks monotonicity → NOT applied.
-{
-  const selects = ["budgets — minimal / low / medium / high", "high", "done"];
-  const inputs = ["2048"];
-  const { ui, notifications } = fakeUi((u) => {
-    let i = 0, j = 0;
-    u.select = async () => selects[i++];
-    u.input = async () => inputs[j] ?? "";
-  });
-  const out = await editEntryLoop(ui, "m", { budgets: { low: 3072, high: 16384 }, maxTokens: 16384 });
-  check("editLoop: monotonic violation rejected", (out?.budgets as { high: number })?.high === 16384, out);
-  check("editLoop: rejection warned", notifications.some((n) => n.includes("Not applied — not monotonic")), notifications);
-}
-
-// 6. Capability bool edit: yes → true.
-{
-  const selects = ["capabilities — reasoning / vision / disableReasoning", "vision", "done"];
-  const { ui } = fakeUi((u) => {
-    let i = 0;
-    u.select = async () => selects[i++];
-    u.input = async () => "yes";
-  });
-  const out = await editEntryLoop(ui, "m", {});
-  check("editLoop: capability set true", out?.vision === true, out);
-}
-
-// 7. Sampling row edit with range check (top_p > 1 rejected, 0.9 applied).
-{
-  const selects = ["sampling — thinking row", "top_p (0, 1]", "done"];
-  const inputs = ["1.5", "0.9"];
-  const { ui } = fakeUi((u) => {
-    let i = 0, j = 0;
-    u.select = async () => selects[i++];
-    u.input = async () => inputs[j++];
-  });
-  const out = await editEntryLoop(ui, "m", {});
-  check("editLoop: sampling range enforced + applied", (out?.thinking as Record<string, number>)?.top_p === 0.9, out);
 }
 
 // ─── teardown ───────────────────────────────────────────────────────────────

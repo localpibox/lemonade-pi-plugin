@@ -150,10 +150,8 @@ export interface ModelParamsEntry {
    * explicit payload value wins). Qwen entries ship
    * `{ "enable_thinking": false }`: the running lemonade server honors it
    * as a hard per-request off switch (validated 2026-09-03 across two
-   * Qwen models — 0 reasoning in 7/7 runs). Whenever a wire
-   * `enable_thinking` field is present in either direction (payload or
-   * offParams), the `/no_think` text suffix is skipped; it remains the
-   * fallback for models/servers without a wire off.
+   * Qwen models — 0 reasoning in 7/7 runs). Models without a wire off
+   * field leave `offParams` unset — the server default stands.
    */
   offParams?: Record<string, unknown>;
   /**
