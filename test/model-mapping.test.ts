@@ -1,7 +1,7 @@
 // Catalog fixture via the user tier (the shipped plugin tier is empty —
 // entries are user configuration, not built-in defaults).
 import * as path from "node:path";
-import { mapToProviderModel } from "../lib/models.js";
+import { mapToProviderModel, isPiCompatible, isPiVisible } from "../lib/models.js";
 import type { LemonadeModelInfo } from "../lib/types.js";
 
 process.env.LEMONADE_PARAMS_FILE = path.join(__dirname, "fixtures", "model-params-fixture.json");
@@ -122,6 +122,27 @@ check("loaded: ctx_size (32768) beats max_context_window and config",
 const ctxBare: LemonadeModelInfo = { id: "CtxBare", name: "CtxBare", recipe: "llamacpp", config: {} } as LemonadeModelInfo;
 check("no ctx data: 128000 fallback", (mapToProviderModel(ctxBare) as any).contextWindow === 128000,
   (mapToProviderModel(ctxBare) as any).contextWindow);
+
+// ── Pi compatibility filter (chat ∧ tool-calling labels) ──
+const lmxOmni: LemonadeModelInfo = { id: "LMX-Omni-52B-Halo", name: "LMX-Omni-52B-Halo", labels: ["chat"], recipe: "llamacpp", config: {} } as LemonadeModelInfo;
+const whisper: LemonadeModelInfo = { id: "Whisper-Large-v3-Turbo", name: "Whisper-Large-v3-Turbo", labels: ["transcription", "realtime-transcription", "hot"], recipe: "llamacpp", config: {} } as LemonadeModelInfo;
+const flux: LemonadeModelInfo = { id: "Flux-2-Klein-9B-GGUF", name: "Flux-2-Klein-9B-GGUF", labels: ["image", "edit"], recipe: "sd-cpp", config: {} } as LemonadeModelInfo;
+const noLabels: LemonadeModelInfo = { id: "UntaggedModel", name: "UntaggedModel", recipe: "llamacpp", config: {} } as LemonadeModelInfo;
+const bonsai: LemonadeModelInfo = { id: "Bonsai-1.7B-gguf", name: "Bonsai-1.7B-gguf", labels: ["chat", "llamacpp", "tool-calling"], recipe: "llamacpp", config: {} } as LemonadeModelInfo;
+
+check("filter: chat+tool-calling model visible (qwen)", isPiCompatible(qwenMtp) && isPiVisible(qwenMtp));
+check("filter: chat+tool-calling minimal (bonsai) visible", isPiCompatible(bonsai));
+check("filter: chat-only omni model excluded (lmx-omni)", !isPiCompatible(lmxOmni) && !isPiVisible(lmxOmni));
+check("filter: transcription model excluded (whisper)", !isPiCompatible(whisper));
+check("filter: image model excluded (flux)", !isPiCompatible(flux));
+check("filter: no labels at all excluded", !isPiCompatible(noLabels));
+
+const savedAll = process.env.LEMONADE_ALL_MODELS;
+delete process.env.LEMONADE_ALL_MODELS;
+check("filter: escape hatch OFF by default", !isPiVisible(whisper));
+process.env.LEMONADE_ALL_MODELS = "1";
+check("filter: LEMONADE_ALL_MODELS=1 shows everything", isPiVisible(whisper) && isPiVisible(flux) && isPiVisible(lmxOmni));
+if (savedAll === undefined) delete process.env.LEMONADE_ALL_MODELS; else process.env.LEMONADE_ALL_MODELS = savedAll;
 
 console.log(fail === 0 ? "\nALL PASS" : `\n${fail} FAILURES`);
 process.exit(fail === 0 ? 0 : 1);

@@ -8,9 +8,9 @@ import type { ExtensionAPI, LemonadeModelInfo } from "./types.js";
 import type { CredsPayload } from "./types.js";
 import { PROVIDER_ID } from "./constants.js";
 import { fetchModels } from "./http.js";
-import { mapToProviderModel as mapFn } from "./models.js";
+import { mapToProviderModel as mapFn, isPiVisible } from "./models.js";
 
-export { isReasoningModel, mapToProviderModel } from "./models.js";
+export { isReasoningModel, isPiCompatible, isPiVisible, mapToProviderModel } from "./models.js";
 
 // ─── Provider (re-)registration ─────────────────────────────────────────────
 
@@ -27,7 +27,9 @@ export async function registerLemonadeProvider(
   let providerModels: ReturnType<typeof mapFn>[] = [];
   if (baseUrl) {
     const raw = await fetchModels(baseUrl, payload?.apiKey);
-    providerModels = raw.map(mapFn);
+    // Only chat + tool-calling models are usable in pi; non-chat classes
+    // (tts/image/3d/embeddings/transcription) never reach the picker.
+    providerModels = raw.filter(isPiVisible).map(mapFn);
   }
 
   try {

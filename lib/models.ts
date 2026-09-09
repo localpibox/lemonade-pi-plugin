@@ -28,6 +28,27 @@ export function isReasoningModel(recipe: string | undefined): boolean {
   return ["qwq", "deepseek-r1", "r1", "o1", "o3", "think"].some((t) => r.includes(t));
 }
 
+/**
+ * Pi compatibility gate: a model can run a pi session only if it does chat
+ * completions AND tool calling. Server-side labels are the single source of
+ * truth (no name heuristics): other model classes (tts, image, 3d,
+ * embeddings, transcription, audio-generation) and chat models missing the
+ * tool-calling tag (e.g. untagged omni models) are excluded. Fix a
+ * mis-tagged model at the source — the server recipe labels.
+ */
+export function isPiCompatible(m: LemonadeModelInfo): boolean {
+  const labels = m.labels ?? [];
+  return labels.includes("chat") && labels.includes("tool-calling");
+}
+
+/**
+ * Pi compatibility with escape hatch: LEMONADE_ALL_MODELS=1 shows every
+ * server model (power users / testing non-chat models).
+ */
+export function isPiVisible(m: LemonadeModelInfo): boolean {
+  return process.env.LEMONADE_ALL_MODELS ? true : isPiCompatible(m);
+}
+
 /** Image-generation input: upstream category/backend check. */
 function hasImageInput(m: LemonadeModelInfo): boolean {
   return m.category === "image" || (m.backend ?? "").toLowerCase().includes("sd");
