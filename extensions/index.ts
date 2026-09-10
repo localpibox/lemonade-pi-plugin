@@ -23,7 +23,7 @@ import { registerAdminCommand } from "../lib/admin.js";
 import { oauthLogin } from "../lib/oauth.js";
 import { registerLemonadeProvider } from "../lib/provider.js";
 import { syncModelStore } from "../lib/sync-store.js";
-import { seedModelEntry } from "../lib/model-params.js";
+import { seedModelEntry, isCatalogued } from "../lib/model-params.js";
 import { tuneModelPayload, envFlag } from "../lib/payload-tuning.js";
 import { writePayloadDebugLog } from "../lib/payload-debug.js";
 
@@ -95,6 +95,28 @@ export default async function lemonadeProvider(pi: ExtensionAPI): Promise<void> 
   if (stored?.baseUrl) {
     try {
       await registerLemonadeProvider(pi, stored, oauthBlock);
+      // Cold-start self-heal: pi's in-memory provider registry may hold a
+      // STALE mapping for a model that was registered before its catalog
+      // entry existed (uncatalogued → reasoning=false via recipe keywords)
+      // — which clamps the session thinking level to "off" until restart.
+      // Re-registering with the catalog present re-maps every model from
+      // the live server; registerProvider merges defined values over the
+      // previous registration, so this replaces the stale capabilities.
+      // Only fires when at least one served model is now catalogued (the
+      // normal case) — a genuinely uncatalogued fleet keeps default pi
+      // behavior, byte-identical.
+      try {
+        const { fetchModels } = await import("../lib/http.js");
+        const raw = await fetchModels(stored.baseUrl, stored.apiKey);
+        if (raw.some((m) => isCatalogued(m.id))) {
+          console.log(
+            "[lemonade] cold-start: catalog present for served models — re-registering with live capabilities",
+          );
+          await registerLemonadeProvider(pi, stored, oauthBlock);
+        }
+      } catch {
+        // best-effort — the first request's seed + resync covers it
+      }
     } catch {
       // ignore — refreshToken will retry
     }

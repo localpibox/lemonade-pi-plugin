@@ -354,7 +354,22 @@ export function resolveModelEntry(modelId: string): ModelParamsEntry | undefined
   if (!modelId) return undefined;
   const base = readPluginParams()?.[modelId];
   const over = readUserParams()?.[modelId];
-  if (!base && !over) return undefined;
+  if (base || over) return mergeEntries(base, over);
+  // Cold-start fallback: the bundled reference tier is NOT a live catalog
+  // (file membership in user/plugin tiers is the tuning gate), but it does
+  // know the CAPABILITY FLAGS for recognized models. A pi process that
+  // registered the provider before this model was seeded maps it with
+  // reasoning=false — which clamps the session thinking level to "off"
+  // until the next restart (the 2026-09-10 Qwen3.8 symptom). Resolving the
+  // example entry here lets a post-registration re-register see the correct
+  // capabilities without writing anything.
+  return readExampleEntry(modelId);
+}
+
+function mergeEntries(
+  base: ModelParamsEntry | undefined,
+  over: ModelParamsEntry | undefined,
+): ModelParamsEntry {
 
   const merge = <T extends Record<string, unknown>>(a?: T, b?: T): T | undefined => {
     const m = { ...a, ...b };
@@ -392,4 +407,15 @@ export function resolveModelEntry(modelId: string): ModelParamsEntry | undefined
 export function thinkingRow(entry: ModelParamsEntry): SamplingParams | undefined {
   if (samplingProfile() === "coding" && entry.coding) return { ...entry.thinking, ...entry.coding };
   return entry.thinking;
+}
+
+/**
+ * True when the model has a live catalog entry (user or plugin tier). The
+ * bundled examples tier is NOT live — it only backs resolveModelEntry's
+ * cold-start capability fallback. Used by the extension to decide whether a
+ * re-registration actually changes pi's in-memory model view.
+ */
+export function isCatalogued(modelId: string): boolean {
+  if (!modelId) return false;
+  return Boolean(readPluginParams()?.[modelId] || readUserParams()?.[modelId]);
 }

@@ -30,6 +30,7 @@ import {
   samplingProfile,
   seedModelEntry,
   thinkingRow,
+  isCatalogued,
 } from "../lib/model-params.js";
 import {
   PAYLOAD_DEBUG_PATH,
@@ -304,18 +305,28 @@ for (const level of ["minimal", "low", "medium", "high"] as const) {
   check("user tier: messages untouched for user-only model", user?.content === "Fix the bug in main.ts", user?.content);
 }
 {
-  // No user file + empty plugin tier → nothing resolves (pass-through)
+  // No user file + empty plugin tier → the examples fallback resolves
+  // recognized models (cold-start capability fix), so tuning applies from
+  // the first request even before seeding. Unknown models still pass through.
   rmSync(userFile);
   const e = resolveModelEntry("Qwen3.8-27B-GGUF");
-  check("user tier: missing file + empty plugin tier → undefined", e === undefined);
+  check("user tier: missing file → examples fallback resolves (cold-start)",
+    e !== undefined && e.reasoning === true, e);
   const p = wirePayload({ thinking_budget_tokens: 8192, reasoning_effort: "medium" });
-  check("user tier: missing file → tuning pass-through", tuneModelPayload(p) === undefined);
+  const r = tuneModelPayload(p);
+  check("user tier: missing file → tuning via examples fallback",
+    r !== undefined && typeof r.temperature === "number", r?.temperature);
+  const unknown = wirePayload({ model: "Totally-Unknown-9B", thinking_budget_tokens: 8192 });
+  check("user tier: unknown model still passes through untouched",
+    tuneModelPayload(unknown) === undefined);
 }
 {
-  // Corrupt user file → warned + treated as missing (no entries)
+  // Corrupt user file → warned + treated as missing (examples fallback
+  // still resolves recognized models — the plugin tier is empty here)
   writeUserFile("this is not json");
   const e = resolveModelEntry("Qwen3.8-27B-GGUF");
-  check("user tier: corrupt file → no entries", e === undefined);
+  check("user tier: corrupt file → examples fallback (reasoning=true)",
+    e !== undefined && e.reasoning === true, e);
   rmSync(userFile);
 }
 
@@ -410,6 +421,42 @@ for (const level of ["minimal", "low", "medium", "high"] as const) {
   check("debug log: enable_thinking null when absent", tuned.enable_thinking === null);
   check("debug log: thinkingLevel from ctx", tuned.thinkingLevel === "minimal");
   check("debug log: topKeys present", Array.isArray(tuned.topKeys) && tuned.topKeys.includes("thinking_budget_tokens"));
+  rmSync(userFile);
+}
+
+// ── cold-start capability fallback (examples tier, read-only) ────────────
+{
+  // No user/plugin entry → the bundled example entry resolves so a
+  // post-registration re-register sees correct capabilities (reasoning flag)
+  // without any config write. This is what fixes "thinking clamped to off"
+  // when pi registered the provider before the model was seeded.
+  rmSync(userFile, { force: true });
+  const ex = resolveModelEntry("Qwen3.8-27B-GGUF");
+  check("cold-start: uncatalogued recognized model resolves from examples",
+    ex !== undefined);
+  check("cold-start: reasoning=true from examples (not recipe keywords)",
+    ex?.reasoning === true, ex);
+  check("cold-start: vision=true from examples", ex?.vision === true);
+  check("cold-start: budgets present (P2 tuning works immediately)",
+    typeof ex?.budgets?.medium === "number");
+  check("cold-start: offParams present (P5 wire off-switch)",
+    ex?.offParams?.enable_thinking === false);
+  check("cold-start: isCatalogued=false (examples tier is NOT live)",
+    isCatalogued("Qwen3.8-27B-GGUF") === false);
+  // No file was written by the resolve — read-only fallback
+  check("cold-start: resolve does not write the user file", !existsSync(userFile));
+
+  // Uncatalogued AND unrecognized → still undefined (default pi behavior)
+  check("cold-start: unknown model stays uncatalogued",
+    resolveModelEntry("Totally-Unknown-9B") === undefined);
+  check("cold-start: unknown model isCatalogued=false", isCatalogued("Totally-Unknown-9B") === false);
+
+  // Live catalog entry wins over the examples fallback
+  writeUserFile({ "Qwen3.8-27B-GGUF": { reasoning: true, maxTokens: 8192 } });
+  const live = resolveModelEntry("Qwen3.8-27B-GGUF");
+  check("cold-start: user tier wins over examples (maxTokens=8192)",
+    live?.maxTokens === 8192, live);
+  check("cold-start: user-tier entry isCatalogued=true", isCatalogued("Qwen3.8-27B-GGUF") === true);
   rmSync(userFile);
 }
 
