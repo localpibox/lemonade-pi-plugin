@@ -8,7 +8,7 @@
 import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
-import { upsertUserParamsEntry, readUserParams } from "../lib/model-params.js";
+import { upsertUserParamsEntry, seedModelEntry, readUserParams } from "../lib/model-params.js";
 import {
   renderEntryOverview,
   tunePickerOptions,
@@ -30,6 +30,7 @@ function check(name: string, cond: boolean, extra?: unknown) {
 const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "lemonade-tune-test-"));
 const paramsFile = path.join(tmpDir, "model-params.json");
 process.env.LEMONADE_PARAMS_FILE = paramsFile;
+process.env.LEMONADE_PAYLOAD_TUNING = "on";
 
 // ─── upsertUserParamsEntry: the never-clobber contract ──────────────────────
 
@@ -64,6 +65,12 @@ check("upsert: non-object file untouched", fs.readFileSync(paramsFile, "utf8") =
 fs.writeFileSync(paramsFile, "{}\n");
 upsertUserParamsEntry("x", { reasoning: false });
 check("upsert: no .seed-tmp left behind", !fs.existsSync(`${paramsFile}.seed-tmp`));
+
+// 6. seedModelEntry shares the same contract (corrupt → "unknown", intact).
+fs.writeFileSync(paramsFile, "not json at all");
+const seedResult = seedModelEntry("Qwen3.8-27B-GGUF-Q4_K_XL");
+check("seed: corrupt file → unknown (no clobber)", seedResult === "unknown", seedResult);
+check("seed: corrupt file untouched", fs.readFileSync(paramsFile, "utf8") === "not json at all");
 
 // ─── Validation ─────────────────────────────────────────────────────────────
 

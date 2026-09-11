@@ -13,7 +13,7 @@
   ],
   "license": "MIT",
   "scripts": {
-    "test": "jiti test/model-mapping.test.ts && jiti test/model-probe.test.ts && jiti test/gguf-params.test.ts && jiti test/tune-ui.test.ts && jiti test/tune-screen.test.ts"
+    "test": "jiti test/model-mapping.test.ts && jiti test/model-probe.test.ts && jiti test/gguf-params.test.ts && jiti test/model-tuning.test.ts && jiti test/thinking-multi-level.test.ts && jiti test/tune-ui.test.ts && jiti test/tune-screen.test.ts"
   },
   "author": "Lemonade SDK",
   "homepage": "https://github.com/lemonade-sdk/lemonade-pi-plugin",
@@ -32,8 +32,6 @@
     "jiti": "^2.7.0"
   },
   "pi": {
-    "extensions": [
-      "extensions/index.ts"
-    ]
+    "extensions": ["extensions/index.ts"]
   }
 }
